@@ -1,0 +1,23 @@
+name = "threads-scheduler"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+APP_NAME = "Threads 自動排程器"
+# 部署後請改成你的 Worker 網址，例如：
+# PUBLIC_BASE_URL = "https://threads-scheduler.your-subdomain.workers.dev"
+PUBLIC_BASE_URL = ""
+# Meta Threads App ID
+THREADS_APP_ID = "YOUR_THREADS_APP_ID"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "threads-scheduler-db"
+database_id = "YOUR_D1_DATABASE_ID"
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "threads-scheduler-media"
+
+[triggers]
+crons = ["* * * * *"]
