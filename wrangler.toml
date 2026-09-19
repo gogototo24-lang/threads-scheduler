@@ -1,14 +1,16 @@
 name = "threads-scheduler"
-main = "src/worker.js"
+main = "src/ai-worker.js"
 compatibility_date = "2026-09-01"
 
 [vars]
 APP_NAME = "Threads 自動排程器"
-# 部署後請更新成你的 Worker URL，例如：
-# PUBLIC_BASE_URL = "https://threads-scheduler.your-subdomain.workers.dev"
 PUBLIC_BASE_URL = "https://threads-scheduler.gogototo24.workers.dev"
-# Meta Threads App ID
 THREADS_APP_ID = "1726220261769989"
+# AI 預設全為 mock；正式 provider 啟用前請用 Worker Secret 設定 provider/API key。
+AI_SEARCH_PROVIDER = "mock"
+AI_TEXT_PROVIDER = "mock"
+AI_IMAGE_PROVIDER = "mock"
+AI_VIDEO_PROVIDER = "mock"
 
 [[d1_databases]]
 binding = "DB"

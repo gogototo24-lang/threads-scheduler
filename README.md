@@ -1,40 +1,43 @@
-# Threads 自動排程器 v1.0
+# AI 自動內容引擎增量功能
 
-保留現有 Cloudflare Worker + D1 + Cron + Threads OAuth + 文字發布功能，並新增：
+已在既有 Worker 外加可替換 provider 與人工審核流程，預設不呼叫任何付費 AI API：
 
-- 文字 + 單張 JPG / PNG 圖片排程
-- 台灣時間 Asia/Taipei 自訂時間與快捷時間
-- 排程狀態：scheduled / publishing / published / failed
-- 顯示排程時間、發布時間、嘗試次數、錯誤訊息
-- 自動失敗重試最多 3 次
-- 已發布貼文會保存 `thread_id`、`permalink` 與連結
-- 支援未發布排程編輯與刪除
-- failed 可重新發布
-- 圖片儲存在 Cloudflare R2，並透過 `/media/*` 公開給 Threads 讀取
-- ADMIN_KEY、Threads Access Token、App Secret 只保留在 Cloudflare Secret / D1，永遠不寫進前端或 GitHub
+- `/review`：待審核內容頁面
+- 每次 mock 掃描產生 4 個來源話題、每個話題 2 個宇宙草稿（共 8 個）
+- 保存來源 URL、來源名稱、抓取時間、摘要、文案、視覺提示詞與建議發布時間
+- `media_jobs` 狀態：pending / generating / completed / failed
+- AI 圖片預覽使用 mock SVG；影片使用 mock placeholder，不會產生付費費用
+- 只有按下「核准並排程」才會寫入既有 `posts` 表，沿用原有 Threads scheduler
+- 政治／公共事務關鍵字只產生中性摘要與創意視覺概念
+- 每分鐘 Cron 保留原有排程發布，並處理 media jobs；距離上次掃描一小時以上時自動掃描
 
-## 需要設定
+## 新增 migration
 
-1. Cloudflare D1 / R2 binding 已經配置在 `wrangler.toml`。
-2. 如需安全存放環境變數，請在 Cloudflare Worker 後台設定：
-   - `ADMIN_KEY`
-   - `THREADS_APP_SECRET`
-3. 如尚未執行 migration，請執行：
-   - `npm run db:migrate:remote`
-4. 若 D1 不存在，請先建立：
-   - `npx wrangler d1 create threads-scheduler-db`
-5. 若 R2 bucket 未建立，請先建立：
-   - `npx wrangler r2 bucket create threads-scheduler-media`
+```bash
+npm run db:migrate:remote
+```
 
-Meta Threads App 需設定 Redirect URI：
-`https://你的-worker網址/auth/callback`
+`0003_ai_content_engine.sql` 新增 `trends`、`content_drafts`、`media_jobs`，不會修改或刪除既有 `posts`、`settings` 或已發布資料。
 
-並至少開放：
-- `threads_basic`
-- `threads_content_publish`
+## Worker Secrets
 
-## 重要提醒
+目前 mock 模式不需要新增 secret。未來啟用 provider 時，建議使用：
 
-- `PUBLIC_BASE_URL` 必須設定成實際 worker 網址，以便圖片和 OAuth callback 正常工作。
-- `media_url` 以 Worker `/media/...` 公開，Threads 會讀取該 URL，所以請避免上傳敏感或私人圖片。
-- 既有 D1 資料與已發布紀錄會保留，新的 migration 只追加 `permalink` 欄位。
+- `AI_SEARCH_API_KEY`
+- `AI_TEXT_API_KEY`
+- `AI_IMAGE_API_KEY`
+- `AI_VIDEO_API_KEY`
+
+Provider 名稱透過非敏感的 `AI_*_PROVIDER` vars 設定，API key 只放 Cloudflare Worker Secrets。實際 provider 仍需依供應商 API 規格在 `src/ai-engine.js` 實作。
+
+## 需要手動申請／設定的 API
+
+目前沒有，因為預設是 mock。正式使用時才需要依選定供應商申請搜尋、文字、圖片與影片 API，並確認授權條款與來源引用要求。
+
+## 可能產生費用的服務
+
+- 外部新聞／社群搜尋 API：依查詢次數或流量計費
+- 文字模型 API：依 input/output tokens 計費
+- 圖片生成 API：依圖片張數、解析度計費
+- 影片生成 API（例如後續 PixVerse 或其他 provider）：通常依秒數、解析度或點數計費
+- Cloudflare Workers、D1、R2：依帳戶方案、請求量、儲存量與流量計費；mock 不會呼叫上述 AI 供應商
