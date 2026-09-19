@@ -37,6 +37,48 @@ export default {
         return handleAdminLogin(request, env);
       }
 
+      if (request.method === 'POST' && url.pathname === '/schedule') {
+        if (!(await isAdmin(request, env))) {
+          return redirect('/?login=bad');
+        }
+
+        const form = await request.formData();
+        const text = String(form.get('text') || '').trim();
+        const quick = String(form.get('quick') || '');
+        const local = String(form.get('scheduledAtLocal') || '');
+
+        if (!text) {
+          return redirect('/?schedule_error=text');
+        }
+
+        let scheduledAt;
+
+        if (quick === '15') {
+          scheduledAt = new Date(Date.now() + 15 * 60 * 1000);
+        } else {
+          if (!local) return redirect('/?schedule_error=time');
+
+          // datetime-local 以台灣時間 UTC+8 解讀
+          scheduledAt = new Date(local + ':00+08:00');
+
+          if (Number.isNaN(scheduledAt.getTime())) {
+            return redirect('/?schedule_error=time');
+          }
+        }
+
+        await env.DB.prepare(`
+          INSERT INTO posts
+          (id, text, media_type, media_key, media_url, scheduled_at, status)
+          VALUES (?, ?, 'TEXT', NULL, NULL, ?, 'scheduled')
+        `).bind(
+          crypto.randomUUID(),
+          text,
+          scheduledAt.toISOString()
+        ).run();
+
+        return redirect('/?scheduled=1');
+      }
+
       if (request.method === 'GET' && url.pathname === '/connect') {
         if (!(await isAdmin(request, env))) {
           return redirect('/?login=bad');
@@ -532,15 +574,15 @@ function renderApp(appName, username = '', serverPostsHtml = '<p class="muted">�
 
   <div class="card">
     <h2>新增排程</h2>
-    <form id="composer">
+    <form id="composer" method="post" action="/schedule">
       <label>貼文文字</label>
-      <textarea name="text" id="text" placeholder="輸入 Threads 貼文內容…"></textarea>
+      <textarea name="text" id="text" placeholder="輸入 Threads 貼文內容…" required></textarea>
       <label>圖片（稍後加入）</label>
       <input type="file" name="image" id="image" accept="image/*" disabled />
       <img id="localPreview" class="preview" style="display:none" />
       <label>發布時間</label>
-      <input type="datetime-local" id="scheduledAtLocal" required />
-      <div class="actions"><button class="primary" type="submit">加入排程</button><button class="secondary" type="button" id="set15">15 分鐘後</button></div>
+      <input type="datetime-local" id="scheduledAtLocal" name="scheduledAtLocal" />
+      <div class="actions"><button class="primary" type="submit">加入排程</button><button class="secondary" type="submit" name="quick" value="15" id="set15">15 分鐘後</button></div>
     </form>
     <div id="composerMsg"></div>
   </div>
