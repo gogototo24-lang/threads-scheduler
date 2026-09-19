@@ -9,7 +9,28 @@ export default {
 
       if (request.method === 'GET' && url.pathname === '/') {
         const username = await getSetting(env, 'threads_username');
-        return htmlResponse(renderApp(env.APP_NAME || 'Threads 自動排程器', username || ''));
+        const loggedIn = await isAdmin(request, env);
+
+        let serverPostsHtml = '<p class="muted">請先登入管理密碼。</p>';
+
+        if (loggedIn) {
+          const result = await env.DB.prepare(`
+            SELECT id, text, scheduled_at, status, attempts, thread_id, error, published_at
+            FROM posts
+            ORDER BY datetime(scheduled_at) DESC
+            LIMIT 100
+          `).all();
+
+          serverPostsHtml = renderPostsHtml(result.results || []);
+        }
+
+        return htmlResponse(
+          renderApp(
+            env.APP_NAME || 'Threads 自動排程器',
+            username || '',
+            serverPostsHtml
+          )
+        );
       }
 
       if (request.method === 'POST' && url.pathname === '/login') {
@@ -441,7 +462,38 @@ function htmlResponse(html) {
   return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
 }
 
-function renderApp(appName, username = '') {
+function renderPostsHtml(posts) {
+  if (!posts || !posts.length) {
+    return '<p class="muted">目前沒有排程。</p>';
+  }
+
+  return posts.map(p => {
+    const status = escapeHtml(p.status || '');
+    const text = escapeHtml(p.text || '(無文字)');
+    const scheduled = escapeHtml(p.scheduled_at || '');
+    const published = p.published_at
+      ? '<span>已發布：' + escapeHtml(p.published_at) + '</span>'
+      : '';
+    const error = p.error
+      ? '<div class="msg err">' + escapeHtml(p.error) + '</div>'
+      : '';
+
+    return `
+      <div class="item">
+        <div><span class="pill ${status}">${status}</span></div>
+        <div style="white-space:pre-wrap;margin-top:8px">${text}</div>
+        <div class="meta">
+          <span>排程：${scheduled}</span>
+          <span>嘗試：${escapeHtml(p.attempts || 0)}</span>
+          ${published}
+        </div>
+        ${error}
+      </div>
+    `;
+  }).join('');
+}
+
+function renderApp(appName, username = '', serverPostsHtml = '<p class="muted">尚無資料。</p>') {
   return `<!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -495,7 +547,7 @@ function renderApp(appName, username = '') {
 
   <div class="card">
     <div class="row" style="align-items:center"><h2 style="margin:0">排程列表</h2><button class="secondary" id="loadPosts">更新列表</button></div>
-    <div id="posts"><p class="muted">尚未載入。</p></div>
+    <div id="posts">${serverPostsHtml}</div>
   </div>
 </div>
 <script>
