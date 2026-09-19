@@ -13,11 +13,7 @@ THREADS_APP_ID = "YOUR_THREADS_APP_ID"
 [[d1_databases]]
 binding = "DB"
 database_name = "threads-scheduler-db"
-database_id = "YOUR_D1_DATABASE_ID"
-
-[[r2_buckets]]
-binding = "MEDIA"
-bucket_name = "threads-scheduler-media"
+database_id = "b466efec-10b0-4e6e-9ea9-7f174946fdb4"
 
 [triggers]
 crons = ["* * * * *"]

@@ -166,36 +166,25 @@ async function apiCreatePost(request, env) {
   const scheduledAtRaw = String(form.get('scheduledAt') || '');
   const file = form.get('image');
 
-  if (!text && !(file instanceof File && file.size > 0)) {
-    return json({ error: '至少需要文字或圖片' }, 400);
+  if (file instanceof File && file.size > 0) {
+    return json({ error: '圖片排程功能尚未啟用，目前先使用文字貼文。' }, 400);
   }
+
+  if (!text) {
+    return json({ error: '請輸入貼文文字' }, 400);
+  }
+
   const scheduledAt = new Date(scheduledAtRaw);
   if (!scheduledAtRaw || Number.isNaN(scheduledAt.getTime())) {
     return json({ error: '排程時間格式錯誤' }, 400);
   }
 
   const id = crypto.randomUUID();
-  let mediaType = 'TEXT';
-  let mediaKey = null;
-  let mediaUrl = null;
-
-  if (file instanceof File && file.size > 0) {
-    if (!file.type.startsWith('image/')) return json({ error: 'v0.1 目前只支援圖片' }, 400);
-    if (file.size > 15 * 1024 * 1024) return json({ error: '圖片請小於 15MB' }, 400);
-    const ext = extensionFor(file.type, file.name);
-    mediaKey = `${new Date().toISOString().slice(0, 10)}/${id}${ext}`;
-    await env.MEDIA.put(mediaKey, file.stream(), {
-      httpMetadata: { contentType: file.type || 'application/octet-stream' }
-    });
-    const base = getBaseUrl(request, env);
-    mediaUrl = `${base}/media/${encodeURIComponent(mediaKey)}`;
-    mediaType = 'IMAGE';
-  }
 
   await env.DB.prepare(`
     INSERT INTO posts (id, text, media_type, media_key, media_url, scheduled_at, status)
-    VALUES (?, ?, ?, ?, ?, ?, 'scheduled')
-  `).bind(id, text, mediaType, mediaKey, mediaUrl, scheduledAt.toISOString()).run();
+    VALUES (?, ?, 'TEXT', NULL, NULL, ?, 'scheduled')
+  `).bind(id, text, scheduledAt.toISOString()).run();
 
   return json({ ok: true, id });
 }
@@ -428,8 +417,8 @@ function renderApp(appName) {
     <form id="composer">
       <label>貼文文字</label>
       <textarea name="text" id="text" placeholder="輸入 Threads 貼文內容…"></textarea>
-      <label>圖片（可選，v0.1 單張）</label>
-      <input type="file" name="image" id="image" accept="image/*" />
+      <label>圖片（稍後加入）</label>
+      <input type="file" name="image" id="image" accept="image/*" disabled />
       <img id="localPreview" class="preview" style="display:none" />
       <label>發布時間</label>
       <input type="datetime-local" id="scheduledAtLocal" required />
