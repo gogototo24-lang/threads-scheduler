@@ -6,9 +6,9 @@ compatibility_date = "2026-09-01"
 APP_NAME = "Threads 自動排程器"
 # 部署後請改成你的 Worker 網址，例如：
 # PUBLIC_BASE_URL = "https://threads-scheduler.your-subdomain.workers.dev"
-PUBLIC_BASE_URL = ""
+PUBLIC_BASE_URL = "https://threads-scheduler.gogototo24.workers.dev"
 # Meta Threads App ID
-THREADS_APP_ID = "YOUR_THREADS_APP_ID"
+THREADS_APP_ID = "1726220261769989"
 
 [[d1_databases]]
 binding = "DB"
