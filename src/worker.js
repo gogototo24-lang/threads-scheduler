@@ -43,7 +43,7 @@ export default {
         return new Response(object.body, { headers });
       }
 
-      if (request.method === 'GET' && (url.pathname === '/auth/callback' || url.pathname === '/auth/callback/')) {
+      if (request.method === 'GET' && url.pathname === '/auth/callback') {
         return handleOAuthCallback(request, env);
       }
 
@@ -142,7 +142,7 @@ async function apiStatus(env) {
 async function apiOAuthUrl(request, env) {
   if (!env.THREADS_APP_ID) return json({ error: '尚未設定 THREADS_APP_ID' }, 400);
   const base = getBaseUrl(request, env);
-  const redirectUri = `${base}/auth/callback/`;
+  const redirectUri = `${base}/auth/callback`;
   const state = crypto.randomUUID().replaceAll('-', '');
   const params = new URLSearchParams({
     client_id: env.THREADS_APP_ID,
@@ -171,7 +171,7 @@ async function handleOAuthCallback(request, env) {
   }
 
   try {
-    const redirectUri = `${base}/auth/callback/`;
+    const redirectUri = `${base}/auth/callback`;
     const shortParams = new URLSearchParams({
       client_id: env.THREADS_APP_ID,
       client_secret: env.THREADS_APP_SECRET,
