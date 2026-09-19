@@ -10,7 +10,7 @@ export default {
     const match = url.pathname.match(/^\/api\/ai\/drafts\/([^/]+)\/(approve|reject|image|video)$/);
     if (match && request.method === 'POST') return guarded(request, env, () => draftAction(request, env, decodeURIComponent(match[1]), match[2]));
     if (url.pathname === '/ai-scan' && request.method === 'POST') return guardedRedirect(request, env, () => scan(env), '/review');
-    if (url.pathname === '/ai-approve' && request.method === 'POST') return guardedRedirect(request, env, () => approve(env, String((await request.formData()).get('id') || '')), '/review');
+    if (url.pathname === '/ai-approve' && request.method === 'POST') return guardedRedirect(request, env, async () => approve(env, String((await request.formData()).get('id') || '')), '/review');
     return legacy.fetch(request, env, ctx);
   },
   async scheduled(controller, env, ctx) {
