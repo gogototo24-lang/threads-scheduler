@@ -435,7 +435,11 @@ function renderApp(appName) {
 <script>
 const $ = s => document.querySelector(s);
 const keyInput = $('#adminKey');
-keyInput.value = localStorage.getItem('threads_admin_key') || '';
+try {
+  keyInput.value = localStorage.getItem('threads_admin_key') || '';
+} catch (_) {
+  keyInput.value = '';
+}
 $('#timezone').textContent = '目前裝置時區：' + Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 function key(){ return keyInput.value.trim(); }
@@ -446,7 +450,15 @@ function fmt(iso){ if(!iso) return ''; return new Date(iso).toLocaleString(); }
 function setDefaultTime(mins=30){ const d=new Date(Date.now()+mins*60000); d.setSeconds(0,0); const off=d.getTimezoneOffset()*60000; $('#scheduledAtLocal').value=new Date(d.getTime()-off).toISOString().slice(0,16); }
 setDefaultTime();
 
-$('#saveKey').onclick = () => { localStorage.setItem('threads_admin_key', key()); msg($('#topMsg'),'管理密碼已儲存在此瀏覽器。'); refreshStatus(); };
+$('#saveKey').onclick = () => {
+  try {
+    localStorage.setItem('threads_admin_key', key());
+    msg($('#topMsg'),'✅ 管理密碼已儲存在此瀏覽器。');
+  } catch (_) {
+    msg($('#topMsg'),'✅ 管理密碼已套用；此瀏覽器不允許永久儲存，重新開頁時需要再輸入。');
+  }
+  refreshStatus();
+};
 $('#set15').onclick = () => setDefaultTime(15);
 $('#refreshBtn').onclick = () => { refreshStatus(); loadPosts(); };
 $('#loadPosts').onclick = loadPosts;
