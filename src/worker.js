@@ -8,7 +8,28 @@ export default {
       const url = new URL(request.url);
 
       if (request.method === 'GET' && url.pathname === '/') {
-        return htmlResponse(renderApp(env.APP_NAME || 'Threads 自動排程器'));
+        const username = await getSetting(env, 'threads_username');
+        return htmlResponse(renderApp(env.APP_NAME || 'Threads 自動排程器', username || ''));
+      }
+
+      if (request.method === 'POST' && url.pathname === '/login') {
+        return handleAdminLogin(request, env);
+      }
+
+      if (request.method === 'GET' && url.pathname === '/connect') {
+        if (!(await isAdmin(request, env))) {
+          return redirect('/?login=bad');
+        }
+
+        const oauthResponse = await apiOAuthUrl(request, env);
+        if (!oauthResponse.ok) return oauthResponse;
+
+        const data = await oauthResponse.clone().json();
+        const headers = new Headers({ location: data.url });
+        const cookie = oauthResponse.headers.get('set-cookie');
+        if (cookie) headers.set('set-cookie', cookie);
+
+        return new Response(null, { status: 302, headers });
       }
 
       if (request.method === 'GET' && url.pathname.startsWith('/media/')) {
@@ -27,7 +48,7 @@ export default {
       }
 
       if (url.pathname.startsWith('/api/')) {
-        if (!isAdmin(request, env)) return json({ error: '管理密碼錯誤' }, 401);
+        if (!(await isAdmin(request, env))) return json({ error: '管理密碼錯誤' }, 401);
 
         if (request.method === 'GET' && url.pathname === '/api/status') {
           return apiStatus(env);
@@ -64,9 +85,46 @@ export default {
   }
 };
 
-function isAdmin(request, env) {
+async function isAdmin(request, env) {
+  if (!env.ADMIN_KEY) return false;
+
   const supplied = request.headers.get('x-admin-key') || '';
-  return !!env.ADMIN_KEY && supplied === env.ADMIN_KEY;
+  if (supplied === env.ADMIN_KEY) return true;
+
+  const session = readCookie(request, 'admin_session');
+  if (!session) return false;
+
+  const expected = await adminSession(env.ADMIN_KEY);
+  return session === expected;
+}
+
+async function adminSession(secret) {
+  const data = new TextEncoder().encode('threads-scheduler:' + secret);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function handleAdminLogin(request, env) {
+  const form = await request.formData();
+  const supplied = String(form.get('adminKey') || '');
+
+  if (!env.ADMIN_KEY || supplied !== env.ADMIN_KEY) {
+    return redirect('/?login=bad');
+  }
+
+  const session = await adminSession(env.ADMIN_KEY);
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      location: '/?login=ok',
+      'set-cookie':
+        'admin_session=' + session +
+        '; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000'
+    }
+  });
 }
 
 async function apiStatus(env) {
@@ -383,7 +441,7 @@ function htmlResponse(html) {
   return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
 }
 
-function renderApp(appName) {
+function renderApp(appName, username = '') {
   return `<!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -393,7 +451,7 @@ function renderApp(appName) {
 <title>${escapeHtml(appName)}</title>
 <style>
 :root{font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif;color:#111;background:#f4f5f7}
-*{box-sizing:border-box}body{margin:0}.wrap{max-width:820px;margin:auto;padding:18px}.card{background:#fff;border:1px solid #e7e7e7;border-radius:20px;padding:18px;margin:14px 0;box-shadow:0 8px 28px rgba(0,0,0,.05)}h1{font-size:26px;margin:6px 0 2px}.sub{color:#666;margin:0 0 14px}.row{display:flex;gap:10px;flex-wrap:wrap}.row>*{flex:1 1 200px}label{font-weight:700;font-size:14px;display:block;margin:8px 0 6px}input,textarea,button{font:inherit}input,textarea{width:100%;border:1px solid #d7d7d7;border-radius:12px;padding:12px;background:#fff}textarea{min-height:130px;resize:vertical}button{border:0;border-radius:12px;padding:12px 16px;font-weight:800;cursor:pointer}.primary{background:#111;color:#fff}.secondary{background:#e9eef8}.danger{background:#ffe8e8;color:#a10000}.small{padding:8px 10px;font-size:13px}.status{display:inline-flex;gap:7px;align-items:center;padding:7px 10px;border-radius:999px;background:#f0f0f0;font-weight:700;font-size:13px}.dot{width:9px;height:9px;border-radius:50%;background:#999}.ok .dot{background:#1f9d55}.bad .dot{background:#d64545}.item{border-top:1px solid #eee;padding:14px 0}.item:first-child{border-top:0}.meta{font-size:12px;color:#666;display:flex;gap:8px;flex-wrap:wrap;margin:7px 0}.preview{max-width:160px;max-height:160px;border-radius:12px;border:1px solid #eee;margin-top:8px}.msg{padding:10px 12px;border-radius:12px;margin:10px 0;background:#f1f7ff}.err{background:#fff0f0;color:#8c1515}.muted{color:#777;font-size:13px}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}.pill{padding:4px 8px;border-radius:999px;background:#eee;font-size:12px;font-weight:700}.scheduled{background:#e7f0ff}.published{background:#e5f8eb}.failed{background:#ffe5e5}.publishing{background:#fff5d8}@media(max-width:520px){.wrap{padding:10px}.card{border-radius:16px;padding:14px}h1{font-size:23px}}
+*{box-sizing:border-box}body{margin:0}.wrap{max-width:820px;margin:auto;padding:18px}.card{background:#fff;border:1px solid #e7e7e7;border-radius:20px;padding:18px;margin:14px 0;box-shadow:0 8px 28px rgba(0,0,0,.05)}h1{font-size:26px;margin:6px 0 2px}.sub{color:#666;margin:0 0 14px}.row{display:flex;gap:10px;flex-wrap:wrap}.row>*{flex:1 1 200px}label{font-weight:700;font-size:14px;display:block;margin:8px 0 6px}input,textarea,button{font:inherit}input,textarea{width:100%;border:1px solid #d7d7d7;border-radius:12px;padding:12px;background:#fff}textarea{min-height:130px;resize:vertical}button{border:0;border-radius:12px;padding:12px 16px;font-weight:800;cursor:pointer}.primary{background:#111;color:#fff}.secondary{background:#e9eef8}.danger{background:#ffe8e8;color:#a10000}.small{padding:8px 10px;font-size:13px}.status{display:inline-flex;gap:7px;align-items:center;padding:7px 10px;border-radius:999px;background:#f0f0f0;font-weight:700;font-size:13px}.dot{width:9px;height:9px;border-radius:50%;background:#999}.ok .dot{background:#1f9d55}.bad .dot{background:#d64545}.item{border-top:1px solid #eee;padding:14px 0}.item:first-child{border-top:0}.meta{font-size:12px;color:#666;display:flex;gap:8px;flex-wrap:wrap;margin:7px 0}.preview{max-width:160px;max-height:160px;border-radius:12px;border:1px solid #eee;margin-top:8px}.msg{padding:10px 12px;border-radius:12px;margin:10px 0;background:#f1f7ff}.err{background:#fff0f0;color:#8c1515}.muted{color:#777;font-size:13px}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}.btnlink{display:inline-block;padding:12px 16px;border-radius:12px;font-weight:800;text-decoration:none}.pill{padding:4px 8px;border-radius:999px;background:#eee;font-size:12px;font-weight:700}.scheduled{background:#e7f0ff}.published{background:#e5f8eb}.failed{background:#ffe5e5}.publishing{background:#fff5d8}@media(max-width:520px){.wrap{padding:10px}.card{border-radius:16px;padding:14px}h1{font-size:23px}}
 </style>
 </head>
 <body>
@@ -401,14 +459,22 @@ function renderApp(appName) {
   <div class="card">
     <h1>🧵 ${escapeHtml(appName)}</h1>
     <p class="sub">文字＋圖片｜指定時間｜自動發布 Threads</p>
-    <div id="connection" class="status"><span class="dot"></span><span>尚未檢查</span></div>
+    <div id="connection" class="status ${username ? 'ok' : 'bad'}"><span class="dot"></span><span>${username ? '已連接 @' + escapeHtml(username) : '尚未連接 Threads'}</span></div>
     <p class="muted" id="timezone"></p>
   </div>
 
   <div class="card">
-    <label>管理密碼</label>
-    <div class="row"><input id="adminKey" type="password" placeholder="Cloudflare ADMIN_KEY"/><button class="secondary" id="saveKey">儲存</button></div>
-    <div class="actions"><button class="primary" id="connectBtn">連接 Threads</button><button class="secondary" id="refreshBtn">重新整理狀態</button></div>
+    <form method="post" action="/login">
+      <label>管理密碼</label>
+      <div class="row">
+        <input id="adminKey" name="adminKey" type="password" placeholder="輸入 ADMIN_KEY" required/>
+        <button class="secondary" id="saveKey" type="submit">登入／儲存</button>
+      </div>
+    </form>
+    <div class="actions">
+      <a class="primary btnlink" id="connectBtn" href="/connect">連接 Threads</a>
+      <button class="secondary" id="refreshBtn">重新整理狀態</button>
+    </div>
     <div id="topMsg"></div>
   </div>
 
@@ -465,7 +531,8 @@ $('#loadPosts').onclick = loadPosts;
 
 $('#image').onchange = e => { const f=e.target.files?.[0]; const p=$('#localPreview'); if(!f){p.style.display='none';return;} p.src=URL.createObjectURL(f); p.style.display='block'; };
 
-$('#connectBtn').onclick = async () => {
+$('#connectBtn').onclick = async (e) => {
+  e.preventDefault();
   try{
     const r=await fetch('/api/oauth-url',{method:'POST',headers:headers()}); const j=await r.json();
     if(!r.ok) throw new Error(j.error||'無法開始 Threads 授權');
