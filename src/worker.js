@@ -580,7 +580,7 @@ window.publishNow = async id => { if(!confirm('現在立即發布這則 Threads�
 window.delPost = async id => { if(!confirm('確定刪除此排程？')) return; try{ const r=await fetch('/api/posts/'+encodeURIComponent(id),{method:'DELETE',headers:headers()}); const j=await r.json(); if(!r.ok) throw new Error(j.error||'刪除失敗'); loadPosts(); }catch(e){alert(e.message);} };
 
 const qs=new URLSearchParams(location.search); if(qs.get('connected')) msg($('#topMsg'),'✅ Threads 已成功連接。'); if(qs.get('oauth')==='failed') msg($('#topMsg'),'Threads 授權失敗：'+(qs.get('message')||'請再試一次'),true);
-if(key()){ refreshStatus(); loadPosts(); }
+refreshStatus(); loadPosts();
 </script>
 </body></html>`;
 }
