@@ -1,43 +1,70 @@
-# AI 自動內容引擎增量功能
+# Threads Scheduler + AI 內容引擎
 
-已在既有 Worker 外加可替換 provider 與人工審核流程，預設不呼叫任何付費 AI API：
+此專案是《喵台灣》與《貓掌江湖》的內容控制器／排程器，負責話題掃描、草稿、媒體工作、人工審核、排程與 Threads 發布。
 
-- `/review`：待審核內容頁面
-- 每次 mock 掃描產生 4 個來源話題、每個話題 2 個宇宙草稿（共 8 個）
-- 保存來源 URL、來源名稱、抓取時間、摘要、文案、視覺提示詞與建議發布時間
-- `media_jobs` 狀態：pending / generating / completed / failed
-- AI 圖片預覽使用 mock SVG；影片使用 mock placeholder，不會產生付費費用
-- 只有按下「核准並排程」才會寫入既有 `posts` 表，沿用原有 Threads scheduler
-- 政治／公共事務關鍵字只產生中性摘要與創意視覺概念
-- 每分鐘 Cron 保留原有排程發布，並處理 media jobs；距離上次掃描一小時以上時自動掃描
+## 目前已實作
+- `/review`
+- `/api/ai/scan`
+- `/api/ai/drafts`
+- `media_jobs`：pending / generating / completed / failed
+- 文字 provider：mock / OpenAI
+- 圖片 provider：mock / OpenAI
+- 影片 provider：mock / PixVerse
+- D1：trends / content_drafts / media_jobs / posts
+- R2：生成媒體
+- Cron：排程發布與媒體工作
 
-## 新增 migration
+## 推薦串聯
 
-```bash
-npm run db:migrate:remote
+```text
+題材
+→ OpenAI 草稿
+→ video-prompt-builder
+→ 首幀
+→ PixVerse 或 Higgsfield Seedance 2.5
+→ AI Music Studio v2
+→ /review
+→ Threads 排程
 ```
 
-`0003_ai_content_engine.sql` 新增 `trends`、`content_drafts`、`media_jobs`，不會修改或刪除既有 `posts`、`settings` 或已發布資料。
+## 兩個宇宙規則
 
-## Worker Secrets
+### 貓掌江湖
+- 9:16
+- 全角色維持母喵設定
+- 電影級布袋戲武俠視覺
+- 強調角色一致性、招式節奏、首尾幀連續
+- 非血腥呈現
 
-目前 mock 模式不需要新增 secret。未來啟用 provider 時，建議使用：
+### 喵台灣
+- 直式社群圖／短片
+- 優先生活、交通、科技、節慶與可視覺化題材
+- 公共事務內容維持事實核實與中立表述
 
-- `AI_SEARCH_API_KEY`
-- `AI_TEXT_API_KEY`
-- `AI_IMAGE_API_KEY`
-- `AI_VIDEO_API_KEY`
+## Provider 設定
 
-Provider 名稱透過非敏感的 `AI_*_PROVIDER` vars 設定，API key 只放 Cloudflare Worker Secrets。實際 provider 仍需依供應商 API 規格在 `src/ai-engine.js` 實作。
+非敏感設定放 `wrangler.toml`：
 
-## 需要手動申請／設定的 API
+```toml
+AI_SEARCH_PROVIDER = "mock"
+AI_TEXT_PROVIDER = "mock"
+AI_IMAGE_PROVIDER = "mock"
+AI_VIDEO_PROVIDER = "mock"
+```
 
-目前沒有，因為預設是 mock。正式使用時才需要依選定供應商申請搜尋、文字、圖片與影片 API，並確認授權條款與來源引用要求。
+正式環境使用 Cloudflare Secrets 保存 API Key。
 
-## 可能產生費用的服務
+## 目前重要限制
 
-- 外部新聞／社群搜尋 API：依查詢次數或流量計費
-- 文字模型 API：依 input/output tokens 計費
-- 圖片生成 API：依圖片張數、解析度計費
-- 影片生成 API（例如後續 PixVerse 或其他 provider）：通常依秒數、解析度或點數計費
-- Cloudflare Workers、D1、R2：依帳戶方案、請求量、儲存量與流量計費；mock 不會呼叫上述 AI 供應商
+1. 影片生成工作已存在，但正式 Threads publisher 目前只完整處理 TEXT / IMAGE。
+2. Higgsfield Seedance 2.5 尚未實作成 Worker provider。
+3. VIDEO 發布在再次核實 Threads 官方 API 前不直接修改 production code。
+
+## 升級狀態
+
+`package-lock.json` 已鎖 Wrangler 4.135.0，這一項目前不需要升級。
+
+## 安全
+
+- API Key、Threads token、Admin key 不提交 Git。
+- 新 provider 先在 mock / staging 測通，再切正式環境。
