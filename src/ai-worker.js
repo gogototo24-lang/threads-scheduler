@@ -58,7 +58,7 @@ async function scan(env) {
 }
 
 async function listDrafts(env) {
-  const rows = (await env.DB.prepare(`SELECT d.*, t.title topic, t.source_url, t.source_name, i.provider image_provider, i.status image_status, i.error image_error, i.output_key image_key, i.output_url image_url, v.provider video_provider, v.status video_status, v.error video_error, v.output_url video_url FROM content_drafts d JOIN trends t ON t.id=d.trend_id LEFT JOIN media_jobs i ON i.id=d.image_job_id LEFT JOIN media_jobs v ON v.id=d.video_job_id WHERE d.review_status='pending' ORDER BY d.created_at DESC`).all()).results || [];
+  const rows = (await env.DB.prepare(`SELECT d.*, t.title topic, t.source_url, t.source_name, i.provider image_provider, i.status image_status, i.error image_error, i.output_key image_key, i.output_url image_url, v.provider video_provider, v.status video_status, v.error video_error, v.output_url video_url, (SELECT value FROM settings WHERE key='media_cost:' || v.id LIMIT 1) video_cost_meta FROM content_drafts d JOIN trends t ON t.id=d.trend_id LEFT JOIN media_jobs i ON i.id=d.image_job_id LEFT JOIN media_jobs v ON v.id=d.video_job_id WHERE d.review_status='pending' ORDER BY d.created_at DESC`).all()).results || [];
   return { drafts: rows };
 }
 
@@ -129,7 +129,15 @@ async function runMediaJob(env, job) {
   } catch (e) { await env.DB.prepare("UPDATE media_jobs SET status='failed',error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(safeError(e), job.id).run(); }
 }
 async function pollMediaJob(env, job) {
-  try { const result = await pollVideo(env, job); if (result.status === 'generating') return; if (result.status === 'failed') throw new Error(result.error || '影片生成失敗'); const downloaded = await fetch(result.url); if (!downloaded.ok) throw new Error('影片下載失敗'); await saveMedia(env, job, { body: downloaded.body, contentType: downloaded.headers.get('content-type') || 'video/mp4' }); }
+  try {
+    const result = await pollVideo(env, job);
+    if (result.status === 'generating') return;
+    if (result.status === 'failed') throw new Error(result.error || '影片生成失敗');
+    if (result.meta) await setSetting(env, `media_cost:${job.id}`, JSON.stringify(result.meta));
+    const downloaded = await fetch(result.url);
+    if (!downloaded.ok) throw new Error('影片下載失敗');
+    await saveMedia(env, job, { body: downloaded.body, contentType: downloaded.headers.get('content-type') || 'video/mp4' });
+  }
   catch (e) { await env.DB.prepare("UPDATE media_jobs SET status='failed',error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(safeError(e), job.id).run(); }
 }
 async function saveMedia(env, job, result) {
@@ -152,8 +160,21 @@ function reviewForm(id, action, fields = '') { return `<form method="post" actio
 function renderDraft(d) {
   const image = d.image_url && d.image_status === 'completed' ? `<img src="${esc(d.image_url)}" alt="圖片預覽">` : '<p>圖片尚未完成</p>';
   const video = d.video_url && d.video_status === 'completed' ? `<video src="${esc(d.video_url)}" controls></video>` : '<p>影片尚未完成</p>';
+  const cost = mediaCostLabel(d.video_cost_meta);
   const fields = `<label>標題</label><input name="title" value="${esc(d.title)}"><label>AI 文案</label><textarea name="copy">${esc(d.copy)}</textarea><label>visual prompt</label><textarea name="visual_prompt">${esc(d.visual_prompt)}</textarea><label>建議發布時間</label><input type="datetime-local" name="suggested_at" value="${esc(localDate(d.suggested_at))}">`;
-  return `<article class="draft"><h2>${esc(d.title)}</h2><p><b>話題：</b>${esc(d.topic)}　<b>宇宙：</b>${esc(d.universe)}</p><p><b>來源：</b><a href="${esc(d.source_url)}" target="_blank">${esc(d.source_name || d.source_url)}</a></p>${reviewForm(d.id, 'edit', fields)}<p><b>圖片：</b>${esc(d.image_provider)} / ${esc(d.image_status)} ${d.image_error ? `<span class="error">${esc(d.image_error)}</span>` : ''}</p>${image}${reviewForm(d.id, 'image')}<p><b>影片：</b>${esc(d.video_provider)} / ${esc(d.video_status)} ${d.video_error ? `<span class="error">${esc(d.video_error)}</span>` : ''}</p>${video}${reviewForm(d.id, 'video')}${reviewForm(d.id, 'approve')}${reviewForm(d.id, 'text')}${reviewForm(d.id, 'reject')}</article>`;
+  return `<article class="draft"><h2>${esc(d.title)}</h2><p><b>話題：</b>${esc(d.topic)}　<b>宇宙：</b>${esc(d.universe)}</p><p><b>來源：</b><a href="${esc(d.source_url)}" target="_blank">${esc(d.source_name || d.source_url)}</a></p>${reviewForm(d.id, 'edit', fields)}<p><b>圖片：</b>${esc(d.image_provider)} / ${esc(d.image_status)} ${d.image_error ? `<span class="error">${esc(d.image_error)}</span>` : ''}</p>${image}${reviewForm(d.id, 'image')}<p><b>影片：</b>${esc(d.video_provider)} / ${esc(d.video_status)} ${cost} ${d.video_error ? `<span class="error">${esc(d.video_error)}</span>` : ''}</p>${video}${reviewForm(d.id, 'video')}${reviewForm(d.id, 'approve')}${reviewForm(d.id, 'text')}${reviewForm(d.id, 'reject')}</article>`;
+}
+function mediaCostLabel(raw) {
+  if (!raw) return '';
+  try {
+    const m = JSON.parse(raw);
+    const seconds = Number(m.taskCostSeconds || 0);
+    const ntd = m.estimatedCostNtd;
+    const parts = [];
+    if (seconds > 0) parts.push(`GPU/任務時間約 ${seconds}s`);
+    if (ntd != null && Number.isFinite(Number(ntd))) parts.push(`估算 NT${Number(ntd).toFixed(2)}`);
+    return parts.length ? `<span class="ok">（${esc(parts.join('，'))}）</span>` : '';
+  } catch { return ''; }
 }
 function localDate(value) { const d = new Date(value); if (Number.isNaN(d.getTime())) return ''; return new Intl.DateTimeFormat('sv-SE', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(d).replace(' ', 'T'); }
 function taipeiLocalToIso(value) { if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) throw new Error('發布時間格式錯誤'); const d = new Date(`${value}:00+08:00`); if (Number.isNaN(d.getTime())) throw new Error('發布時間格式錯誤'); return d.toISOString(); }
