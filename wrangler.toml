@@ -12,6 +12,15 @@ AI_TEXT_PROVIDER = "mock"
 AI_IMAGE_PROVIDER = "mock"
 AI_VIDEO_PROVIDER = "mock"
 
+# RunningHub 低成本測片 provider（未配置前不會呼叫、不會扣點）
+RUNNINGHUB_API_BASE_URL = "https://www.runninghub.ai"
+RUNNINGHUB_VIDEO_WEBAPP_ID = ""
+RUNNINGHUB_VIDEO_NODE_INFO_JSON = ""
+RUNNINGHUB_VIDEO_DURATION = "5"
+RUNNINGHUB_VIDEO_ASPECT_RATIO = "9:16"
+# 選填：只有你知道實際每 GPU 分鐘成本時才設定，用於「估算 NT$」顯示；0 表示只記 taskCostTime。
+RUNNINGHUB_EST_NTD_PER_GPU_MIN = "0"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "threads-scheduler-db"
