@@ -9,7 +9,7 @@
 - `media_jobs`：pending / generating / completed / failed
 - 文字 provider：mock / OpenAI
 - 圖片 provider：mock / OpenAI
-- 影片 provider：mock / PixVerse
+- 影片 provider：mock / PixVerse / RunningHub AI App
 - D1：trends / content_drafts / media_jobs / posts
 - R2：生成媒體
 - Cron：排程發布與媒體工作
@@ -21,7 +21,7 @@
 → OpenAI 草稿
 → video-prompt-builder
 → 首幀
-→ PixVerse 或 Higgsfield Seedance 2.5
+→ RunningHub 低成本測片 / PixVerse / Higgsfield Seedance 2.5
 → AI Music Studio v2
 → /review
 → Threads 排程
@@ -50,9 +50,31 @@ AI_SEARCH_PROVIDER = "mock"
 AI_TEXT_PROVIDER = "mock"
 AI_IMAGE_PROVIDER = "mock"
 AI_VIDEO_PROVIDER = "mock"
+
+# RunningHub 只有在正式測通後才切：
+# AI_VIDEO_PROVIDER = "runninghub"
 ```
 
 正式環境使用 Cloudflare Secrets 保存 API Key。
+
+## RunningHub 低成本測片
+
+已完成 RunningHub AI App provider adapter：
+
+- 上傳已核准首幀
+- 建立 RunningHub `taskId`
+- 輪詢 `/task/openapi/outputs`
+- 完成後下載 MP4 到 R2
+- 審核頁記錄 `taskCostTime`
+- 可選填每 GPU 分鐘台幣估值，顯示估算成本
+- 預設仍為 `mock`，不會自動扣點
+
+正式啟用前必須設定：
+- Worker Secret：`RUNNINGHUB_API_KEY`
+- `RUNNINGHUB_VIDEO_WEBAPP_ID`
+- `RUNNINGHUB_VIDEO_NODE_INFO_JSON`
+
+完整說明：`docs/RUNNINGHUB_PROVIDER.md`
 
 ## 目前重要限制
 
