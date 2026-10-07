@@ -28,15 +28,18 @@ export async function generateImage(env, job, draft = null) {
 }
 
 export async function startVideo(env, job, draft, image) {
-  const provider = providers(env).video;
+  const provider = job?.provider || providers(env).video;
   if (provider === 'mock') return { kind: 'completed', result: mockVideo(job) };
   if (provider === 'pixverse') return pixverseStart(env, job, draft, image);
+  if (provider === 'runninghub') return runningHubStart(env, job, draft, image);
   throw new Error(`不支援的影片 provider：${provider}`);
 }
 
 export async function pollVideo(env, job) {
-  if (providers(env).video !== 'pixverse') throw new Error(`不支援的影片 provider：${providers(env).video}`);
-  return pixversePoll(env, job);
+  const provider = job?.provider || providers(env).video;
+  if (provider === 'pixverse') return pixversePoll(env, job);
+  if (provider === 'runninghub') return runningHubPoll(env, job);
+  throw new Error(`不支援的影片 provider：${provider}`);
 }
 
 async function openAiSearch(env) {
@@ -90,6 +93,141 @@ async function pixversePoll(env, job) {
   if (status === 5) return { status: 'generating' };
   if (status === 7 || status === 8) return { status: 'failed', error: result.message || result.error || `PixVerse 影片狀態：${status}` };
   return { status: 'generating' };
+}
+
+
+async function runningHubStart(env, job, draft, image) {
+  requireSecret(env.RUNNINGHUB_API_KEY, 'RUNNINGHUB_API_KEY');
+  requireSecret(env.RUNNINGHUB_VIDEO_WEBAPP_ID, 'RUNNINGHUB_VIDEO_WEBAPP_ID');
+  requireSecret(env.RUNNINGHUB_VIDEO_NODE_INFO_JSON, 'RUNNINGHUB_VIDEO_NODE_INFO_JSON');
+  if (!image?.url) throw new Error('請先生成圖片');
+
+  const base = (env.RUNNINGHUB_API_BASE_URL || 'https://www.runninghub.ai').replace(/\/$/, '');
+  const source = await fetch(image.url);
+  if (!source.ok) throw new Error('RunningHub 首幀下載失敗');
+
+  const uploadForm = new FormData();
+  uploadForm.append('apiKey', env.RUNNINGHUB_API_KEY);
+  uploadForm.append('fileType', 'input');
+  uploadForm.append(
+    'file',
+    new Blob([await source.arrayBuffer()], { type: source.headers.get('content-type') || 'image/png' }),
+    'first-frame.png'
+  );
+
+  const uploaded = await fetch(`${base}/task/openapi/upload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${env.RUNNINGHUB_API_KEY}` },
+    body: uploadForm
+  });
+  const uploadJson = await readJson(uploaded);
+  const fileName = uploadJson?.data?.fileName;
+  if (!uploaded.ok || uploadJson?.code !== 0 || !fileName) {
+    throw new Error(uploadJson?.msg || uploadJson?.error?.message || 'RunningHub 圖片上傳失敗');
+  }
+
+  let template;
+  try {
+    template = JSON.parse(env.RUNNINGHUB_VIDEO_NODE_INFO_JSON);
+  } catch {
+    throw new Error('RUNNINGHUB_VIDEO_NODE_INFO_JSON 不是合法 JSON');
+  }
+  if (!Array.isArray(template) || !template.length) throw new Error('RUNNINGHUB_VIDEO_NODE_INFO_JSON 必須是非空陣列');
+
+  const duration = Number(env.RUNNINGHUB_VIDEO_DURATION || 5);
+  const aspectRatio = env.RUNNINGHUB_VIDEO_ASPECT_RATIO || '9:16';
+  const prompt = job.input_prompt || draft?.visual_prompt || '';
+  const vars = {
+    IMAGE: fileName,
+    PROMPT: prompt,
+    DURATION: duration,
+    ASPECT_RATIO: aspectRatio
+  };
+  const nodeInfoList = materializeRunningHubTemplate(template, vars);
+
+  const response = await fetch(`${base}/task/openapi/ai-app/run`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.RUNNINGHUB_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      apiKey: env.RUNNINGHUB_API_KEY,
+      webappId: String(env.RUNNINGHUB_VIDEO_WEBAPP_ID),
+      nodeInfoList
+    })
+  });
+  const data = await readJson(response);
+  const taskId = data?.data?.taskId;
+  if (!response.ok || data?.code !== 0 || !taskId) {
+    throw new Error(data?.msg || data?.error?.message || 'RunningHub 任務建立失敗');
+  }
+  return { kind: 'pending', providerJobId: String(taskId) };
+}
+
+async function runningHubPoll(env, job) {
+  requireSecret(env.RUNNINGHUB_API_KEY, 'RUNNINGHUB_API_KEY');
+  const base = (env.RUNNINGHUB_API_BASE_URL || 'https://www.runninghub.ai').replace(/\/$/, '');
+  const response = await fetch(`${base}/task/openapi/outputs`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.RUNNINGHUB_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      apiKey: env.RUNNINGHUB_API_KEY,
+      taskId: String(job.provider_job_id)
+    })
+  });
+  const payload = await readJson(response);
+  if (!response.ok || (payload?.code != null && payload.code !== 0)) {
+    return { status: 'failed', error: payload?.msg || payload?.error?.message || 'RunningHub 查詢失敗' };
+  }
+
+  const data = payload?.data;
+  if (!Array.isArray(data)) return { status: 'generating' };
+  if (!data.length) return { status: 'generating' };
+
+  const video = data.find((x) => {
+    const type = String(x?.fileType || '').toLowerCase();
+    const url = String(x?.fileUrl || '').toLowerCase();
+    return ['mp4', 'mov', 'webm', 'avi', 'mkv'].includes(type) || /\.(mp4|mov|webm|avi|mkv)(\?|$)/.test(url);
+  });
+  if (!video?.fileUrl) {
+    return { status: 'failed', error: 'RunningHub 已完成，但沒有找到影片輸出' };
+  }
+
+  const taskCostSeconds = Number(video.taskCostTime || data[0]?.taskCostTime || 0);
+  const ntdPerGpuMinute = Number(env.RUNNINGHUB_EST_NTD_PER_GPU_MIN || 0);
+  const estimatedCostNtd = taskCostSeconds > 0 && ntdPerGpuMinute > 0
+    ? Math.round((taskCostSeconds / 60) * ntdPerGpuMinute * 100) / 100
+    : null;
+
+  return {
+    status: 'completed',
+    url: video.fileUrl,
+    meta: {
+      taskCostSeconds: Number.isFinite(taskCostSeconds) ? taskCostSeconds : 0,
+      estimatedCostNtd,
+      outputNodeId: video.nodeId || null,
+      fileType: video.fileType || 'video'
+    }
+  };
+}
+
+function materializeRunningHubTemplate(value, vars) {
+  if (Array.isArray(value)) return value.map((x) => materializeRunningHubTemplate(x, vars));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, materializeRunningHubTemplate(v, vars)]));
+  }
+  if (typeof value !== 'string') return value;
+
+  const exact = value.match(/^\{\{([A-Z_]+)\}\}$/);
+  if (exact && Object.prototype.hasOwnProperty.call(vars, exact[1])) return vars[exact[1]];
+
+  return value.replace(/\{\{([A-Z_]+)\}\}/g, (_, key) =>
+    Object.prototype.hasOwnProperty.call(vars, key) ? String(vars[key]) : `{{${key}}}`
+  );
 }
 
 async function openAiRequest(env, body) { const response = await fetch(OPENAI_RESPONSES_URL, { method: 'POST', headers: authHeaders(env.OPENAI_API_KEY, 'application/json'), body: JSON.stringify(body) }); const data = await readJson(response); if (!response.ok) throw new Error(data?.error?.message || 'OpenAI Responses API 失敗'); return data; }
