@@ -6,6 +6,8 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === '/review' && request.method === 'GET') return reviewPage(request, env);
+    if (url.pathname === '/api/factory/p2/status' && request.method === 'GET') return factoryP2StatusResponse(env);
+    if (url.pathname === '/api/factory/p2/submit' && request.method === 'POST') return guarded(request, env, () => factoryP2Submit(request, env));
     if (url.pathname === '/api/ai/scan' && request.method === 'POST') return guarded(request, env, () => scan(env));
     if (url.pathname === '/api/ai/drafts' && request.method === 'GET') return guarded(request, env, () => listDrafts(env));
     const apiMatch = url.pathname.match(/^\/api\/ai\/drafts\/([^/]+)\/(approve|text|reject|image|video|edit)$/);
@@ -38,6 +40,158 @@ async function reviewAction(request, env) {
   const id = String(form.get('id') || '');
   const action = String(form.get('action') || '');
   return guardedRedirect(request, env, () => draftAction(request, env, id, action), '/review');
+}
+
+
+function factoryP2Config(env) {
+  const maxBudget = Number(env.FACTORY_P2_MAX_TWD || 15);
+  const duration = Number(env.FACTORY_P2_DURATION_SECONDS || 5);
+  const liveEnabled = String(env.FACTORY_LIVE_ENABLED || '').toLowerCase() === 'true';
+  const publishEnabled = String(env.FACTORY_PUBLISH_ENABLED || '').toLowerCase() === 'true';
+  const hasApiKey = Boolean(env.RUNNINGHUB_API_KEY);
+  const hasWebApp = Boolean(String(env.RUNNINGHUB_VIDEO_WEBAPP_ID || '').trim());
+  const hasNodeMap = Boolean(String(env.RUNNINGHUB_VIDEO_NODE_INFO_JSON || '').trim());
+  const configured = hasApiKey && hasWebApp && hasNodeMap;
+  return {
+    version: '0.3',
+    phase: 'P2',
+    pipeline_id: 'A',
+    provider: 'runninghub',
+    mode: 'single_job_only',
+    live_enabled: liveEnabled,
+    publish_enabled: publishEnabled,
+    configured,
+    can_submit: liveEnabled && configured && !publishEnabled,
+    duration_seconds: Number.isFinite(duration) ? duration : 5,
+    max_budget_twd: Number.isFinite(maxBudget) ? maxBudget : 15,
+    checks: {
+      runninghub_api_key: hasApiKey,
+      runninghub_webapp_id: hasWebApp,
+      runninghub_node_mapping: hasNodeMap,
+      live_switch: liveEnabled,
+      publish_lock: !publishEnabled
+    }
+  };
+}
+
+function factoryP2StatusResponse(env) {
+  const cfg = factoryP2Config(env);
+  const missing = [];
+  if (!cfg.checks.runninghub_api_key) missing.push('RUNNINGHUB_API_KEY');
+  if (!cfg.checks.runninghub_webapp_id) missing.push('RUNNINGHUB_VIDEO_WEBAPP_ID');
+  if (!cfg.checks.runninghub_node_mapping) missing.push('RUNNINGHUB_VIDEO_NODE_INFO_JSON');
+  if (!cfg.checks.live_switch) missing.push('FACTORY_LIVE_ENABLED=true');
+  if (!cfg.checks.publish_lock) missing.push('FACTORY_PUBLISH_ENABLED 必須維持 false');
+  return jsonCors({
+    ...cfg,
+    missing,
+    note: cfg.can_submit
+      ? 'P2 已具備單筆真實測片提交條件；仍需管理員明確提交。'
+      : 'P2 保持鎖定，不會呼叫付費 provider。'
+  });
+}
+
+async function factoryP2Submit(request, env) {
+  const cfg = factoryP2Config(env);
+  if (!cfg.live_enabled) throw new Error('P2 真實測片尚未解鎖：FACTORY_LIVE_ENABLED=false');
+  if (cfg.publish_enabled) throw new Error('安全閘門阻擋：FACTORY_PUBLISH_ENABLED 必須為 false');
+  if (!cfg.configured) throw new Error('RunningHub 尚未完成 API Key / WebApp ID / node mapping 設定');
+  if (cfg.duration_seconds !== 5) throw new Error('P2 第一階段只允許 5 秒單筆測片');
+
+  const body = await request.json();
+  if (body.pipeline_id !== 'A') throw new Error('P2 第一階段只允許 A 產線');
+  if (body.provider !== 'runninghub') throw new Error('P2 第一階段只允許 RunningHub');
+  if (body.approval !== 'APPROVE_SINGLE_PAID_TEST') throw new Error('缺少單筆付費測試核准字串');
+  if (body.publish === true) throw new Error('P2 真實測片禁止自動發布');
+
+  const prompt = String(body.prompt || '').trim();
+  if (prompt.length < 20) throw new Error('影片提示詞過短');
+
+  const firstFrameUrl = String(body.first_frame_url || '').trim();
+  let parsed;
+  try { parsed = new URL(firstFrameUrl); } catch { throw new Error('first_frame_url 格式錯誤'); }
+  if (parsed.protocol !== 'https:') throw new Error('first_frame_url 必須是 HTTPS');
+
+  const requestedBudget = Number(body.budget_max_twd);
+  if (!Number.isFinite(requestedBudget) || requestedBudget <= 0) throw new Error('budget_max_twd 必須大於 0');
+  if (requestedBudget > cfg.max_budget_twd) throw new Error(`單筆預算超過 P2 上限 NT${cfg.max_budget_twd}`);
+
+  const idempotencyKey = String(body.idempotency_key || '').trim();
+  if (!/^[A-Za-z0-9._:-]{8,120}$/.test(idempotencyKey)) throw new Error('idempotency_key 格式錯誤');
+  const prior = await setting(env, `factory_p2_idem:${idempotencyKey}`);
+  if (prior) return { ok: true, duplicate: true, ...JSON.parse(prior) };
+
+  const active = await env.DB.prepare(
+    "SELECT v.id FROM media_jobs v JOIN content_drafts d ON d.id=v.draft_id WHERE v.kind='video' AND v.provider='runninghub' AND v.status IN ('pending','generating') AND d.review_status='factory_p2_hold' LIMIT 1"
+  ).first();
+  if (active?.id) throw new Error('目前已有一筆 P2 RunningHub 任務執行中；單筆模式禁止併發');
+
+  const trendId = crypto.randomUUID();
+  const draftId = crypto.randomUUID();
+  const imageJobId = crypto.randomUUID();
+  const videoJobId = crypto.randomUUID();
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(
+    'INSERT INTO trends (id,title,summary,source_url,source_name,fetched_at,content_type,topic) VALUES (?,?,?,?,?,?,?,?)'
+  ).bind(
+    trendId,
+    'CatPaw Factory P2 單筆測片',
+    'A 產線 RunningHub 5 秒真實測片；完成後只進審核，不發布。',
+    firstFrameUrl,
+    'catpaw-factory-p2',
+    now,
+    'video',
+    'factory-p2'
+  ).run();
+
+  await env.DB.prepare(
+    'INSERT INTO content_drafts (id,trend_id,universe,title,summary,copy,visual_prompt,suggested_at,review_status,image_job_id,video_job_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+  ).bind(
+    draftId,
+    trendId,
+    String(body.universe || '貓掌江湖'),
+    String(body.title || 'CatPaw P2 RunningHub 測片').slice(0, 200),
+    'P2 單筆低成本測片',
+    'FACTORY_P2_HOLD：不得自動發布',
+    prompt,
+    new Date(Date.now() + 86400000).toISOString(),
+    'factory_p2_hold',
+    imageJobId,
+    videoJobId
+  ).run();
+
+  await env.DB.prepare(
+    "INSERT INTO media_jobs (id,draft_id,kind,provider,status,input_prompt,output_key,output_url,provider_job_id,error,attempts,requested_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+  ).bind(
+    imageJobId, draftId, 'image', 'factory_input', 'completed', 'approved first frame',
+    null, firstFrameUrl, null, null, 0, null
+  ).run();
+
+  await env.DB.prepare(
+    "INSERT INTO media_jobs (id,draft_id,kind,provider,status,input_prompt,attempts,requested_at) VALUES (?,?,?,?,?,?,?,?)"
+  ).bind(
+    videoJobId, draftId, 'video', 'runninghub', 'pending', prompt, 0, now
+  ).run();
+
+  const record = {
+    job_id: videoJobId,
+    draft_id: draftId,
+    pipeline_id: 'A',
+    provider: 'runninghub',
+    duration_seconds: 5,
+    budget_max_twd: requestedBudget,
+    status: 'queued_for_single_test',
+    publish: false
+  };
+  await setSetting(env, `factory_p2_idem:${idempotencyKey}`, JSON.stringify(record));
+  await setSetting(env, `factory_p2_budget:${videoJobId}`, JSON.stringify({
+    currency: 'TWD',
+    max_amount: requestedBudget,
+    hard_provider_cap: false,
+    note: '此金額是提交前安全閘門，不代表 RunningHub 提供硬性計費上限。'
+  }));
+  return { ok: true, duplicate: false, ...record };
 }
 
 async function scan(env) {
@@ -184,5 +338,6 @@ async function setting(env, key) { return (await env.DB.prepare('SELECT value FR
 async function setSetting(env, key, value) { await env.DB.prepare('INSERT INTO settings(key,value,updated_at) VALUES(?,?,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP').bind(key, String(value)).run(); }
 function redirect(location) { return new Response(null, { status: 302, headers: { location } }); }
 function json(value, status = 200) { return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } }); }
+function jsonCors(value, status = 200) { return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'access-control-allow-origin': '*' } }); }
 function esc(value) { return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function safeError(e) { return String(e?.message || e || 'Unknown error').slice(0, 800); }
