@@ -21,6 +21,12 @@ RUNNINGHUB_VIDEO_ASPECT_RATIO = "9:16"
 # 選填：只有你知道實際每 GPU 分鐘成本時才設定，用於「估算 NT$」顯示；0 表示只記 taskCostTime。
 RUNNINGHUB_EST_NTD_PER_GPU_MIN = "0"
 
+# CatPaw AI Factory P2 safety gates
+FACTORY_LIVE_ENABLED = "false"
+FACTORY_PUBLISH_ENABLED = "false"
+FACTORY_P2_MAX_TWD = "15"
+FACTORY_P2_DURATION_SECONDS = "5"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "threads-scheduler-db"
