@@ -105,13 +105,18 @@ async function runningHubStart(env, job, draft, image) {
   const base = (env.RUNNINGHUB_API_BASE_URL || 'https://www.runninghub.ai').replace(/\/$/, '');
   const source = await fetch(image.url);
   if (!source.ok) throw new Error('RunningHub 首幀下載失敗');
+  const sourceBytes = await source.arrayBuffer();
+  const maxUploadMb = Math.max(1, Number(env.RUNNINGHUB_MAX_UPLOAD_MB || 30));
+  if (sourceBytes.byteLength > maxUploadMb * 1024 * 1024) {
+    throw new Error(`RunningHub 首幀超過上傳上限 ${maxUploadMb}MB`);
+  }
 
   const uploadForm = new FormData();
   uploadForm.append('apiKey', env.RUNNINGHUB_API_KEY);
   uploadForm.append('fileType', 'input');
   uploadForm.append(
     'file',
-    new Blob([await source.arrayBuffer()], { type: source.headers.get('content-type') || 'image/png' }),
+    new Blob([sourceBytes], { type: source.headers.get('content-type') || 'image/png' }),
     'first-frame.png'
   );
 
@@ -134,16 +139,30 @@ async function runningHubStart(env, job, draft, image) {
   }
   if (!Array.isArray(template) || !template.length) throw new Error('RUNNINGHUB_VIDEO_NODE_INFO_JSON 必須是非空陣列');
 
+  const templateText = JSON.stringify(template);
+  const requiredBindings = ['IMAGE', 'PROMPT', 'DURATION', 'ASPECT_RATIO'];
+  const missingBindings = requiredBindings.filter((key) => !templateText.includes(`{{${key}}}`));
+  if (missingBindings.length) {
+    throw new Error(`RunningHub node map 缺少必要綁定：${missingBindings.join(', ')}`);
+  }
+
   const duration = Number(env.RUNNINGHUB_VIDEO_DURATION || 5);
-  const aspectRatio = env.RUNNINGHUB_VIDEO_ASPECT_RATIO || '9:16';
+  const aspectRatio = String(env.RUNNINGHUB_VIDEO_ASPECT_RATIO || '').trim();
+  if (!aspectRatio) throw new Error('RUNNINGHUB_VIDEO_ASPECT_RATIO 未設定');
   const prompt = job.input_prompt || draft?.visual_prompt || '';
   const vars = {
     IMAGE: fileName,
     PROMPT: prompt,
     DURATION: duration,
-    ASPECT_RATIO: aspectRatio
+    ASPECT_RATIO: aspectRatio,
+    MEGAPIXELS: Number(env.RUNNINGHUB_VIDEO_MEGAPIXELS || 0.4),
+    STEPS: Number(env.RUNNINGHUB_VIDEO_STEPS || 24),
+    SEED: Number(env.RUNNINGHUB_VIDEO_SEED || 632121643472834),
+    FPS: Number(env.RUNNINGHUB_VIDEO_FPS || 24)
   };
   const nodeInfoList = materializeRunningHubTemplate(template, vars);
+  const unresolved = [...new Set((JSON.stringify(nodeInfoList).match(/\{\{[A-Z_]+\}\}/g) || []))];
+  if (unresolved.length) throw new Error(`RunningHub node map 尚有未解析變數：${unresolved.join(', ')}`);
 
   const response = await fetch(`${base}/task/openapi/ai-app/run`, {
     method: 'POST',
@@ -167,6 +186,11 @@ async function runningHubStart(env, job, draft, image) {
 
 async function runningHubPoll(env, job) {
   requireSecret(env.RUNNINGHUB_API_KEY, 'RUNNINGHUB_API_KEY');
+  const timeoutSeconds = Math.max(60, Number(env.RUNNINGHUB_TASK_TIMEOUT_SECONDS || 900));
+  const requestedAt = job?.requested_at ? new Date(job.requested_at).getTime() : NaN;
+  if (Number.isFinite(requestedAt) && Date.now() - requestedAt > timeoutSeconds * 1000) {
+    return { status: 'failed', error: `RunningHub 任務超過 ${timeoutSeconds} 秒仍未完成，停止本地輪詢以避免無限等待` };
+  }
   const base = (env.RUNNINGHUB_API_BASE_URL || 'https://www.runninghub.ai').replace(/\/$/, '');
   const response = await fetch(`${base}/task/openapi/outputs`, {
     method: 'POST',
@@ -194,10 +218,12 @@ async function runningHubPoll(env, job) {
     return ['mp4', 'mov', 'webm', 'avi', 'mkv'].includes(type) || /\.(mp4|mov|webm|avi|mkv)(\?|$)/.test(url);
   });
   if (!video?.fileUrl) {
-    return { status: 'failed', error: 'RunningHub 已完成，但沒有找到影片輸出' };
+    // Some workflows expose intermediate image/audio outputs before the final video.
+    // Keep polling instead of turning a valid in-progress task into a false failure.
+    return { status: 'generating' };
   }
 
-  const taskCostSeconds = Number(video.taskCostTime || data[0]?.taskCostTime || 0);
+  const taskCostSeconds = Math.max(0, ...data.map((x) => Number(x?.taskCostTime || 0)).filter(Number.isFinite));
   const ntdPerGpuMinute = Number(env.RUNNINGHUB_EST_NTD_PER_GPU_MIN || 0);
   const estimatedCostNtd = taskCostSeconds > 0 && ntdPerGpuMinute > 0
     ? Math.round((taskCostSeconds / 60) * ntdPerGpuMinute * 100) / 100
