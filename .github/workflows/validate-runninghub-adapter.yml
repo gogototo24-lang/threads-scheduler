@@ -1,0 +1,33 @@
+name: Validate RunningHub Adapter
+
+on:
+  push:
+    paths:
+      - "src/ai-engine.js"
+      - "src/ai-worker.js"
+      - "wrangler.toml"
+      - ".github/workflows/validate-runninghub-adapter.yml"
+  pull_request:
+    paths:
+      - "src/ai-engine.js"
+      - "src/ai-worker.js"
+      - "wrangler.toml"
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check JavaScript syntax
+        run: |
+          node --check src/ai-engine.js
+          node --check src/ai-worker.js
+      - name: Check safety gates
+        run: |
+          grep -q 'FACTORY_LIVE_ENABLED = "false"' wrangler.toml
+          grep -q 'FACTORY_PUBLISH_ENABLED = "false"' wrangler.toml
+          grep -q 'RUNNINGHUB_TASK_TIMEOUT_SECONDS' wrangler.toml
+          grep -q 'RUNNINGHUB_MAX_UPLOAD_MB' wrangler.toml
