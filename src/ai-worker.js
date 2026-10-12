@@ -50,8 +50,23 @@ function factoryP2Config(env) {
   const publishEnabled = String(env.FACTORY_PUBLISH_ENABLED || '').toLowerCase() === 'true';
   const hasApiKey = Boolean(env.RUNNINGHUB_API_KEY);
   const hasWebApp = Boolean(String(env.RUNNINGHUB_VIDEO_WEBAPP_ID || '').trim());
-  const hasNodeMap = Boolean(String(env.RUNNINGHUB_VIDEO_NODE_INFO_JSON || '').trim());
-  const configured = hasApiKey && hasWebApp && hasNodeMap;
+  const rawNodeMap = String(env.RUNNINGHUB_VIDEO_NODE_INFO_JSON || '').trim();
+  const hasNodeMap = Boolean(rawNodeMap);
+  let nodeMapValid = false;
+  const nodeBindings = { image: false, prompt: false, duration: false, aspect_ratio: false };
+  if (hasNodeMap) {
+    try {
+      const parsed = JSON.parse(rawNodeMap);
+      nodeMapValid = Array.isArray(parsed) && parsed.length > 0;
+      const encoded = JSON.stringify(parsed);
+      nodeBindings.image = encoded.includes('{{IMAGE}}');
+      nodeBindings.prompt = encoded.includes('{{PROMPT}}');
+      nodeBindings.duration = encoded.includes('{{DURATION}}');
+      nodeBindings.aspect_ratio = encoded.includes('{{ASPECT_RATIO}}');
+    } catch {}
+  }
+  const requiredNodeBindingsOk = Object.values(nodeBindings).every(Boolean);
+  const configured = hasApiKey && hasWebApp && hasNodeMap && nodeMapValid && requiredNodeBindingsOk;
   return {
     version: '0.3',
     phase: 'P2',
@@ -68,6 +83,11 @@ function factoryP2Config(env) {
       runninghub_api_key: hasApiKey,
       runninghub_webapp_id: hasWebApp,
       runninghub_node_mapping: hasNodeMap,
+      runninghub_node_mapping_valid: nodeMapValid,
+      runninghub_image_binding: nodeBindings.image,
+      runninghub_prompt_binding: nodeBindings.prompt,
+      runninghub_duration_binding: nodeBindings.duration,
+      runninghub_aspect_ratio_binding: nodeBindings.aspect_ratio,
       live_switch: liveEnabled,
       publish_lock: !publishEnabled
     }
@@ -80,6 +100,11 @@ function factoryP2StatusResponse(env) {
   if (!cfg.checks.runninghub_api_key) missing.push('RUNNINGHUB_API_KEY');
   if (!cfg.checks.runninghub_webapp_id) missing.push('RUNNINGHUB_VIDEO_WEBAPP_ID');
   if (!cfg.checks.runninghub_node_mapping) missing.push('RUNNINGHUB_VIDEO_NODE_INFO_JSON');
+  if (cfg.checks.runninghub_node_mapping && !cfg.checks.runninghub_node_mapping_valid) missing.push('RUNNINGHUB_VIDEO_NODE_INFO_JSON 必須是非空 JSON 陣列');
+  if (!cfg.checks.runninghub_image_binding) missing.push('node map 缺少 {{IMAGE}}');
+  if (!cfg.checks.runninghub_prompt_binding) missing.push('node map 缺少 {{PROMPT}}');
+  if (!cfg.checks.runninghub_duration_binding) missing.push('node map 缺少 {{DURATION}}');
+  if (!cfg.checks.runninghub_aspect_ratio_binding) missing.push('node map 缺少 {{ASPECT_RATIO}}');
   if (!cfg.checks.live_switch) missing.push('FACTORY_LIVE_ENABLED=true');
   if (!cfg.checks.publish_lock) missing.push('FACTORY_PUBLISH_ENABLED 必須維持 false');
   return jsonCors({
