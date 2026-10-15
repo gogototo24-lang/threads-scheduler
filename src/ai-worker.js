@@ -1,11 +1,18 @@
 const TZ = 'Asia/Taipei';
 import legacy from './worker.js';
 import { generateImage, startVideo, pollVideo, providers, searchTrends, generateDrafts } from './ai-engine.js';
+import { factoryP3Status, factoryP3Create, factoryP3Get, factoryP3List, factoryP3Retry, processFactoryP3 } from './factory-p3.js';
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === '/review' && request.method === 'GET') return reviewPage(request, env);
+    if (url.pathname === '/api/factory/p3/status' && request.method === 'GET') return jsonCors(await factoryP3Status(env));
+    if (url.pathname === '/api/factory/p3/jobs' && request.method === 'GET') return guarded(request, env, async () => factoryP3List(env, url.searchParams.get('limit') || 20));
+    if (url.pathname === '/api/factory/p3/jobs' && request.method === 'POST') return guarded(request, env, () => factoryP3Create(request, env));
+    const p3JobMatch = url.pathname.match(/^\/api\/factory\/p3\/jobs\/([^/]+)(?:\/(retry))?$/);
+    if (p3JobMatch && request.method === 'GET' && !p3JobMatch[2]) return guarded(request, env, async () => factoryP3Get(env, decodeURIComponent(p3JobMatch[1])));
+    if (p3JobMatch && request.method === 'POST' && p3JobMatch[2] === 'retry') return guarded(request, env, async () => factoryP3Retry(env, decodeURIComponent(p3JobMatch[1])));
     if (url.pathname === '/api/factory/p2/status' && request.method === 'GET') return factoryP2StatusResponse(env);
     if (url.pathname === '/api/factory/p2/submit' && request.method === 'POST') return guarded(request, env, () => factoryP2Submit(request, env));
     if (url.pathname === '/api/ai/scan' && request.method === 'POST') return guarded(request, env, () => scan(env));
@@ -23,6 +30,7 @@ export default {
       const last = await setting(env, 'ai_last_scan');
       if (!last || Date.now() - new Date(last).getTime() >= 3600000) await scan(env);
       await processMediaJobs(env);
+      await processFactoryP3(env);
     })());
   }
 };
