@@ -20,7 +20,7 @@ function p3Config(env){
   const maxRetries = Math.max(0, Math.min(5, Number(env.FACTORY_P3_MAX_RETRIES || 2)));
   return {
     phase:'P3',
-    version:'0.5',
+    version:'0.6',
     enabled,
     publish_enabled:publishEnabled,
     max_retries:maxRetries,
@@ -91,7 +91,9 @@ export async function factoryP3Create(request, env){
       title,
       ending_text:String(body.ending_text||'').slice(0,120),
       transition:String(body.transition||'cut'),
-      original_audio_volume:Number(body.original_audio_volume ?? 0.18)
+      original_audio_volume:Number(body.original_audio_volume ?? 0.18),
+      smart_cut:body.smart_cut !== false,
+      clip_roles:Array.isArray(body.clip_roles)?body.clip_roles:[]
     };
     const outputSpec={
       aspect_ratio:String(body.aspect_ratio||'9:16'),
@@ -306,7 +308,9 @@ async function startC(env,job,step,cfg){
         original_audio_volume:Number(input.original_audio_volume ?? 0.18),
         title_text:input.title||'',
         ending_text:input.ending_text||'',
-        reuse_mode:'cycle'
+        reuse_mode:'cycle',
+        smart_cut:input.smart_cut !== false,
+        clip_roles:Array.isArray(input.clip_roles)?input.clip_roles:[]
       })
     });
     const data=await response.json().catch(()=>({}));
