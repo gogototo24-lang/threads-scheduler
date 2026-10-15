@@ -21,7 +21,7 @@ export async function generateDrafts(env, trend) {
 }
 
 export async function generateImage(env, job, draft = null) {
-  const provider = providers(env).image;
+  const provider = job?.provider || providers(env).image;
   if (provider === 'mock') return mockImage(job);
   if (provider === 'openai') return openAiImage(env, job, draft);
   throw new Error(`不支援的圖片 provider：${provider}`);
