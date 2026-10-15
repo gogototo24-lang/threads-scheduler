@@ -28,6 +28,11 @@ RUNNINGHUB_MAX_UPLOAD_MB = "30"
 # 選填：只有你知道實際每 GPU 分鐘成本時才設定，用於「估算 NT$」顯示；0 表示只記 taskCostTime。
 RUNNINGHUB_EST_NTD_PER_GPU_MIN = "0"
 
+# CatPaw AI Factory P3 control plane
+FACTORY_P3_ENABLED = "false"
+FACTORY_P3_MAX_RETRIES = "2"
+AI_MUSIC_STUDIO_URL = "https://ai-music-studio-v2.onrender.com"
+
 # CatPaw AI Factory P2 safety gates
 FACTORY_LIVE_ENABLED = "false"
 FACTORY_PUBLISH_ENABLED = "false"
