@@ -29,7 +29,7 @@ RUNNINGHUB_MAX_UPLOAD_MB = "30"
 RUNNINGHUB_EST_NTD_PER_GPU_MIN = "0"
 
 # CatPaw AI Factory P3 control plane
-FACTORY_P3_ENABLED = "false"
+FACTORY_P3_ENABLED = "true"
 FACTORY_P3_MAX_RETRIES = "2"
 AI_MUSIC_STUDIO_URL = "https://ai-music-studio-v2.onrender.com"
 
