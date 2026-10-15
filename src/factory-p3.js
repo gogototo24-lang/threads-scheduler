@@ -1,4 +1,4 @@
-import { startVideo, pollVideo } from './ai-engine.js';
+import { generateImage, startVideo, pollVideo } from './ai-engine.js';
 
 const ALLOWED_PIPELINES = new Set(['A','B','C','D']);
 const TERMINAL = new Set(['ready','completed','failed','cancelled']);
