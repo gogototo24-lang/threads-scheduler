@@ -199,6 +199,31 @@ async function failStep(env,job,step,message,cfg){
   }
 }
 
+
+async function technicalProbe(cfg,url,expected={}){
+  const response=await fetch(cfg.ai_music_studio_url+'/api/editor/probe-url',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({url,kind:'video'})
+  });
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok||data.status!=='success') throw new Error(data?.detail||`technical probe HTTP ${response.status}`);
+  const meta=data.meta||{};
+  const failures=[];
+  if(!meta.has_video) failures.push('no_video_stream');
+  if(Number(meta.duration||0)<=0) failures.push('invalid_duration');
+  if(Number(meta.width||0)<320||Number(meta.height||0)<320) failures.push('resolution_too_low');
+  if(Number(meta.fps||0)>0 && Number(meta.fps)<15) failures.push('fps_too_low');
+  if(expected.duration_seconds){
+    const target=Number(expected.duration_seconds);
+    const actual=Number(meta.duration||0);
+    const tolerance=Math.max(1.2,target*0.12);
+    if(Math.abs(actual-target)>tolerance) failures.push('duration_out_of_range');
+  }
+  if(failures.length) throw new Error('technical QA failed: '+failures.join(','));
+  return meta;
+}
+
 async function startA(env,job,step,cfg){
   const input=safeJson(job.input_json);
   const spec=safeJson(job.output_spec_json);
@@ -235,11 +260,13 @@ async function pollA(env,job,step,cfg){
     if(result.status==='failed') throw new Error(result.error||'RunningHub failed');
     if(result.status!=='completed'||!result.url) throw new Error('RunningHub 完成但沒有影片 URL');
 
+    const input=safeJson(job.input_json), spec=safeJson(job.output_spec_json);
+    const qaMeta=await technicalProbe(cfg,result.url,{duration_seconds:spec.duration_seconds||5});
     const assetId=crypto.randomUUID(), qaId=sid(job.id,2,'technical_qa');
     await env.DB.batch([
       env.DB.prepare("UPDATE factory_steps SET status='completed',error_code=NULL,updated_at=? WHERE id=?").bind(now(),step.id),
       env.DB.prepare("INSERT INTO factory_assets (id,job_id,step_id,kind,url,mock,publishable,metadata_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
-        .bind(assetId,job.id,step.id,'video',result.url,0,0,JSON.stringify(result.meta||{}),now()),
+        .bind(assetId,job.id,step.id,'video',result.url,0,0,JSON.stringify({provider:result.meta||{},technical_qa:qaMeta}),now()),
       env.DB.prepare("UPDATE factory_steps SET status='completed',attempt=1,error_code=NULL,updated_at=? WHERE id=?")
         .bind(now(),qaId),
       env.DB.prepare("UPDATE factory_jobs SET status='ready',asset_approval='auto_qa_passed',actual_cost=?,updated_at=? WHERE id=?")
@@ -251,7 +278,7 @@ async function pollA(env,job,step,cfg){
           Number(result?.meta?.estimatedCostNtd||0),Number(result?.meta?.estimatedCostNtd||0),
           Number(result?.meta?.taskCostSeconds||0),now()).run();
     }
-    await event(env,job.id,'auto_qa_passed',{asset_id:assetId,url:result.url,checks:['https_url','provider_completed','non_mock_asset']});
+    await event(env,job.id,'auto_qa_passed',{asset_id:assetId,url:result.url,checks:['https_url','provider_completed','non_mock_asset','ffprobe'],technical_qa:qaMeta});
     await event(env,job.id,'job_ready',{publish:false});
   }catch(e){ await failStep(env,job,step,String(e),cfg); }
 }
@@ -307,11 +334,13 @@ async function pollC(env,job,step,cfg){
     if(data.status!=='success'||!data.video_url) throw new Error('Editor 完成但沒有 video_url');
 
     const videoUrl=new URL(data.video_url,cfg.ai_music_studio_url).href;
+    const spec=safeJson(job.output_spec_json);
+    const qaMeta=await technicalProbe(cfg,videoUrl,{duration_seconds:spec.duration_seconds||30});
     const assetId=crypto.randomUUID(), qaId=sid(job.id,2,'technical_qa');
     await env.DB.batch([
       env.DB.prepare("UPDATE factory_steps SET status='completed',error_code=NULL,updated_at=? WHERE id=?").bind(now(),step.id),
       env.DB.prepare("INSERT INTO factory_assets (id,job_id,step_id,kind,url,mock,publishable,metadata_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
-        .bind(assetId,job.id,step.id,'video',videoUrl,0,0,JSON.stringify(data.meta||{}),now()),
+        .bind(assetId,job.id,step.id,'video',videoUrl,0,0,JSON.stringify({editor:data.meta||{},technical_qa:qaMeta}),now()),
       env.DB.prepare("UPDATE factory_steps SET status='completed',attempt=1,error_code=NULL,updated_at=? WHERE id=?")
         .bind(now(),qaId),
       env.DB.prepare("UPDATE factory_jobs SET status='ready',asset_approval='auto_qa_passed',updated_at=? WHERE id=?")
@@ -320,8 +349,9 @@ async function pollC(env,job,step,cfg){
     await event(env,job.id,'auto_qa_passed',{
       asset_id:assetId,
       url:videoUrl,
-      checks:['editor_success','https_output','duration_present'],
-      meta:data.meta||{}
+      checks:['editor_success','https_output','duration_present','ffprobe'],
+      meta:data.meta||{},
+      technical_qa:qaMeta
     });
     await event(env,job.id,'job_ready',{publish:false});
   }catch(e){ await failStep(env,job,step,String(e),cfg); }
