@@ -14,10 +14,10 @@ AI_VIDEO_PROVIDER = "mock"
 
 # RunningHub 低成本測片 provider（未配置前不會呼叫、不會扣點）
 RUNNINGHUB_API_BASE_URL = "https://www.runninghub.ai"
-RUNNINGHUB_VIDEO_WEBAPP_ID = ""
-RUNNINGHUB_VIDEO_NODE_INFO_JSON = ""
+RUNNINGHUB_VIDEO_WEBAPP_ID = "2109201035672047617"
+RUNNINGHUB_VIDEO_NODE_INFO_JSON = '[{"nodeId":"241","fieldName":"image","fieldValue":"{{IMAGE}}"},{"nodeId":"213","fieldName":"value","fieldValue":"{{PROMPT}}"},{"nodeId":"197","fieldName":"value","fieldValue":"{{DURATION}}"},{"nodeId":"188","fieldName":"aspect_ratio","fieldValue":"{{ASPECT_RATIO}}"},{"nodeId":"188","fieldName":"megapixels","fieldValue":"{{MEGAPIXELS}}"},{"nodeId":"198","fieldName":"steps","fieldValue":"{{STEPS}}"},{"nodeId":"195","fieldName":"noise_seed","fieldValue":"{{SEED}}"}]'
 RUNNINGHUB_VIDEO_DURATION = "5"
-RUNNINGHUB_VIDEO_ASPECT_RATIO = "9:16"
+RUNNINGHUB_VIDEO_ASPECT_RATIO = "9:16 (Portrait Widescreen)"
 RUNNINGHUB_VIDEO_MEGAPIXELS = "0.4"
 RUNNINGHUB_VIDEO_STEPS = "24"
 RUNNINGHUB_VIDEO_SEED = "632121643472834"
