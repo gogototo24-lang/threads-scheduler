@@ -27,6 +27,8 @@ jobs:
           node --check src/ai-engine.js
           node --check src/ai-worker.js
           node --check src/factory-p3.js
+      - name: Wrangler dry-run bundle
+        run: npx wrangler deploy --dry-run --outdir .wrangler-dry-run
       - name: Check safety gates
         run: |
           grep -q 'FACTORY_LIVE_ENABLED = "false"' wrangler.toml
