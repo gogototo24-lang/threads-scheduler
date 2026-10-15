@@ -20,13 +20,13 @@ function p3Config(env){
   const maxRetries = Math.max(0, Math.min(5, Number(env.FACTORY_P3_MAX_RETRIES || 2)));
   return {
     phase:'P3',
-    version:'0.7',
+    version:'0.8',
     enabled,
     publish_enabled:publishEnabled,
     max_retries:maxRetries,
     pipelines:{
       A:{state:'live_capable', provider:'runninghub', autonomous_to:'ready'},
-      B:{state:'adapter_pending', provider:null, autonomous_to:'draft'},
+      B:{state:'live_capable', provider:'openai-image', autonomous_to:'ready'},
       C:{state:'live_capable', provider:'ai-music-studio-v2', autonomous_to:'ready'},
       D:{state:'live_capable', provider:'runninghub+ai-music-studio-v2', autonomous_to:'ready'}
     },
@@ -53,6 +53,7 @@ export async function factoryP3Status(env){
     can_run_C:cfg.enabled && dbReady && musicService,
     can_run_D:cfg.enabled && dbReady && musicService && Boolean(env.RUNNINGHUB_API_KEY) &&
       Boolean(env.RUNNINGHUB_VIDEO_WEBAPP_ID) && Boolean(env.RUNNINGHUB_VIDEO_NODE_INFO_JSON),
+    can_run_B:cfg.enabled && dbReady && Boolean(env.OPENAI_API_KEY),
     note: cfg.enabled
       ? 'P3 控制面已啟用；發布仍由 FACTORY_PUBLISH_ENABLED 單獨控制。'
       : 'P3 控制面已部署但保持安全鎖定；不會建立付費任務。'
@@ -66,8 +67,41 @@ export async function factoryP3Create(request, env){
   const pipeline=String(body.pipeline_id||'').toUpperCase();
   if(!ALLOWED_PIPELINES.has(pipeline)) throw new Error('pipeline_id 必須為 A/B/C/D');
 
-  if(!['A','C','D'].includes(pipeline)){
-    throw new Error(`P3 目前只允許 A/C/D 線建立真實任務；${pipeline} 線狀態：${cfg.pipelines[pipeline].state}`);
+  if(!['A','B','C','D'].includes(pipeline)){
+    throw new Error(`P3 目前只允許 A/B/C/D 線建立真實任務；${pipeline} 線狀態：${cfg.pipelines[pipeline].state}`);
+  }
+
+  if(pipeline==='B'){
+    const prompt=String(body.prompt||'').trim();
+    const idem=String(body.idempotency_key||'').trim();
+    const title=String(body.title||'CatPaw B-line Fashion Portrait').slice(0,160);
+    if(prompt.length<20) throw new Error('B 線 prompt 太短');
+    if(!/^[A-Za-z0-9._:-]{8,120}$/.test(idem)) throw new Error('idempotency_key 格式錯誤');
+    const forbidden=/\b(nude|nudity|naked|topless|explicit|sexual|sex|fetish|porn|lingerie|underwear)\b/i;
+    if(forbidden.test(prompt)) throw new Error('B 線只允許成年人、非裸露、非露骨的時尚寫真內容');
+    const duplicate=await env.DB.prepare("SELECT * FROM factory_jobs WHERE idempotency_key=? LIMIT 1").bind(idem).first();
+    if(duplicate) return {ok:true,duplicate:true,job_id:duplicate.id,status:duplicate.status};
+
+    const id=jid(), created=now();
+    const guardedPrompt=`adult woman age 25+, fully clothed, non-explicit fashion editorial portrait, no nudity, no lingerie, no fetish, no sexual content. ${prompt}`;
+    const input={title,prompt:guardedPrompt};
+    const outputSpec={aspect_ratio:'9:16',kind:'image',quality:'standard'};
+    await env.DB.prepare(
+      "INSERT INTO factory_jobs (id,schema_version,pipeline_id,universe,mode,status,source_system,source_id,input_json,output_spec_json,paid_enabled,publish_enabled,budget_currency,budget_max,asset_approval,paid_batch_approval,publish_approval,idempotency_key,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    ).bind(
+      id,'factory.job.v1','B','成年時尚寫真','live','queued','catpaw-p3','api',
+      JSON.stringify(input),JSON.stringify(outputSpec),1,0,'TWD',Number(body.budget_max_twd||20),
+      'auto_qa_pending','approved','pending',idem,created,created
+    ).run();
+    const s1=sid(id,1,'generate_image'), s2=sid(id,2,'technical_qa');
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO factory_steps (id,job_id,step_order,name,depends_on_json,provider,status,attempt,mock,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+        .bind(s1,id,1,'generate_image','[]','openai','pending',0,0,created,created),
+      env.DB.prepare("INSERT INTO factory_steps (id,job_id,step_order,name,depends_on_json,provider,status,attempt,mock,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+        .bind(s2,id,2,'technical_qa',JSON.stringify([s1]),'catpaw_auto_qa','blocked',0,0,created,created)
+    ]);
+    await event(env,id,'job_created',{pipeline_id:'B',content_guard:'adult_fully_clothed_non_explicit',publish:false});
+    return {ok:true,duplicate:false,job_id:id,status:'queued',pipeline_id:'B'};
   }
 
   if(pipeline==='D'){
@@ -238,7 +272,9 @@ export async function factoryP3Retry(env,id){
   const job=await env.DB.prepare("SELECT * FROM factory_jobs WHERE id=? AND mode='live'").bind(id).first();
   if(!job) throw new Error('找不到 live 任務');
   let step;
-  if(job.pipeline_id==='D'){
+  if(job.pipeline_id==='B'){
+    step=await env.DB.prepare("SELECT * FROM factory_steps WHERE job_id=? AND name='generate_image' LIMIT 1").bind(id).first();
+  }else if(job.pipeline_id==='D'){
     step=await env.DB.prepare("SELECT * FROM factory_steps WHERE job_id=? AND status IN ('failed','pending') ORDER BY step_order LIMIT 1").bind(id).first();
   }else{
     const stepName=job.pipeline_id==='C'?'compose_mv':'generate_video';
@@ -290,6 +326,31 @@ async function technicalProbe(cfg,url,expected={}){
   }
   if(failures.length) throw new Error('technical QA failed: '+failures.join(','));
   return meta;
+}
+
+
+async function startB(env,job,step,cfg){
+  const input=safeJson(job.input_json);
+  await env.DB.prepare("UPDATE factory_steps SET status='generating',attempt=attempt+1,updated_at=? WHERE id=? AND status='pending'")
+    .bind(now(),step.id).run();
+  const current=await env.DB.prepare("SELECT * FROM factory_steps WHERE id=?").bind(step.id).first();
+  try{
+    const result=await generateImage(env,{provider:'openai',input_prompt:input.prompt},{universe:'成年時尚寫真'});
+    if(!result?.body) throw new Error('OpenAI 圖片生成沒有回傳內容');
+    const key=`factory/b/${job.id}.png`;
+    await env.MEDIA.put(key,result.body,{httpMetadata:{contentType:result.contentType||'image/png',cacheControl:'public, max-age=31536000, immutable'}});
+    const url=`${String(env.PUBLIC_BASE_URL||'').replace(/\/$/,'')}/media/${encodeURIComponent(key)}`;
+    const assetId=crypto.randomUUID(), qaId=sid(job.id,2,'technical_qa');
+    await env.DB.batch([
+      env.DB.prepare("UPDATE factory_steps SET status='completed',error_code=NULL,updated_at=? WHERE id=?").bind(now(),step.id),
+      env.DB.prepare("INSERT INTO factory_assets (id,job_id,step_id,kind,storage_key,url,mock,publishable,metadata_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+        .bind(assetId,job.id,step.id,'image',key,url,0,0,JSON.stringify({content_type:result.contentType||'image/png',content_guard:'adult_fully_clothed_non_explicit'}),now()),
+      env.DB.prepare("UPDATE factory_steps SET status='completed',attempt=1,error_code=NULL,updated_at=? WHERE id=?").bind(now(),qaId),
+      env.DB.prepare("UPDATE factory_jobs SET status='ready',asset_approval='auto_qa_passed',updated_at=? WHERE id=?").bind(now(),job.id)
+    ]);
+    await event(env,job.id,'auto_qa_passed',{asset_id:assetId,url,checks:['non_mock_asset','image_content_type','content_guard']});
+    await event(env,job.id,'job_ready',{publish:false});
+  }catch(e){ await failStep(env,job,current,String(e),cfg); }
 }
 
 async function startA(env,job,step,cfg){
@@ -584,13 +645,19 @@ export async function processFactoryP3(env){
   const cfg=p3Config(env);
   if(!cfg.enabled) return {processed:0,enabled:false};
   const jobs=(await env.DB.prepare(
-    "SELECT * FROM factory_jobs WHERE mode='live' AND pipeline_id IN ('A','C','D') AND status IN ('queued','retrying','generating') ORDER BY created_at LIMIT 8"
+    "SELECT * FROM factory_jobs WHERE mode='live' AND pipeline_id IN ('A','B','C','D') AND status IN ('queued','retrying','generating') ORDER BY created_at LIMIT 10"
   ).all()).results||[];
   let processed=0;
   for(const job of jobs){
     if(TERMINAL.has(job.status)) continue;
     if(job.pipeline_id==='D'){
       await processD(env,job,cfg);
+      processed++;
+      continue;
+    }
+    if(job.pipeline_id==='B'){
+      const step=await env.DB.prepare("SELECT * FROM factory_steps WHERE job_id=? AND name='generate_image' LIMIT 1").bind(job.id).first();
+      if(step?.status==='pending') await startB(env,job,step,cfg);
       processed++;
       continue;
     }
