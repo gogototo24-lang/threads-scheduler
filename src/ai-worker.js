@@ -2,11 +2,17 @@ const TZ = 'Asia/Taipei';
 import legacy from './worker.js';
 import { generateImage, startVideo, pollVideo, providers, searchTrends, generateDrafts } from './ai-engine.js';
 import { factoryP3Status, factoryP3Create, factoryP3Get, factoryP3List, factoryP3Retry, processFactoryP3 } from './factory-p3.js';
+import { factoryP4Status, factoryP4Create, factoryP4Get, factoryP4List, processFactoryP4 } from './factory-p4.js';
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === '/review' && request.method === 'GET') return reviewPage(request, env);
+    if (url.pathname === '/api/factory/p4/status' && request.method === 'GET') return jsonCors(await factoryP4Status(env));
+    if (url.pathname === '/api/factory/p4/jobs' && request.method === 'GET') return guarded(request, env, async () => factoryP4List(env, url.searchParams.get('limit') || 20));
+    if (url.pathname === '/api/factory/p4/jobs' && request.method === 'POST') return guarded(request, env, () => factoryP4Create(request, env));
+    const p4JobMatch = url.pathname.match(/^\/api\/factory\/p4\/jobs\/([^/]+)$/);
+    if (p4JobMatch && request.method === 'GET') return guarded(request, env, async () => factoryP4Get(env, decodeURIComponent(p4JobMatch[1])));
     if (url.pathname === '/api/factory/p3/status' && request.method === 'GET') return jsonCors(await factoryP3Status(env));
     if (url.pathname === '/api/factory/p3/jobs' && request.method === 'GET') return guarded(request, env, async () => factoryP3List(env, url.searchParams.get('limit') || 20));
     if (url.pathname === '/api/factory/p3/jobs' && request.method === 'POST') return guarded(request, env, () => factoryP3Create(request, env));
@@ -31,6 +37,7 @@ export default {
       if (!last || Date.now() - new Date(last).getTime() >= 3600000) await scan(env);
       await processMediaJobs(env);
       await processFactoryP3(env);
+      await processFactoryP4(env);
     })());
   }
 };
