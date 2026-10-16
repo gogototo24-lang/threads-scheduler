@@ -84,7 +84,7 @@ export function councilProviderStatus(env){
     },
     anthropic:{
       configured:Boolean(env.ANTHROPIC_API_KEY),
-      model:String(env.COUNCIL_ANTHROPIC_MODEL || 'claude-sonnet-4-5'),
+      model:String(env.COUNCIL_ANTHROPIC_MODEL || 'claude-sonnet-5'),
       role:'critic_verifier'
     },
     meta:{
@@ -158,7 +158,7 @@ async function runMeta(env, payload){
 
 async function runAnthropic(env, payload){
   requireSecret(env.ANTHROPIC_API_KEY, 'ANTHROPIC_API_KEY');
-  const model = String(env.COUNCIL_ANTHROPIC_MODEL || 'claude-sonnet-4-5');
+  const model = String(env.COUNCIL_ANTHROPIC_MODEL || 'claude-sonnet-5');
   const body = {
     model,
     max_tokens:Number(env.COUNCIL_ANTHROPIC_MAX_TOKENS || 5000),
