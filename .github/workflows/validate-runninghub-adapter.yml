@@ -6,12 +6,18 @@ on:
       - "src/ai-engine.js"
       - "src/ai-worker.js"
       - "src/factory-p3.js"
+      - "src/factory-p4.js"
+      - "src/council-providers.js"
+      - "migrations/0006_council_p4.sql"
       - "wrangler.toml"
       - ".github/workflows/validate-runninghub-adapter.yml"
   pull_request:
     paths:
       - "src/ai-engine.js"
       - "src/ai-worker.js"
+      - "src/factory-p4.js"
+      - "src/council-providers.js"
+      - "migrations/0006_council_p4.sql"
       - "wrangler.toml"
 
 jobs:
@@ -27,11 +33,15 @@ jobs:
           node --check src/ai-engine.js
           node --check src/ai-worker.js
           node --check src/factory-p3.js
+          node --check src/factory-p4.js
+          node --check src/council-providers.js
       - name: Wrangler dry-run bundle
         run: npx wrangler deploy --dry-run --outdir .wrangler-dry-run
       - name: Check safety gates
         run: |
           grep -q 'FACTORY_LIVE_ENABLED = "false"' wrangler.toml
           grep -q 'FACTORY_PUBLISH_ENABLED = "false"' wrangler.toml
+          grep -q 'FACTORY_P4_ENABLED = "false"' wrangler.toml
+          grep -q 'FACTORY_P4_AUTO_EXECUTE = "false"' wrangler.toml
           grep -q 'RUNNINGHUB_TASK_TIMEOUT_SECONDS' wrangler.toml
           grep -q 'RUNNINGHUB_MAX_UPLOAD_MB' wrangler.toml
