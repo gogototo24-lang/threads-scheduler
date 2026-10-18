@@ -7,6 +7,8 @@ on:
       - "src/ai-worker.js"
       - "src/factory-p3.js"
       - "src/factory-p4.js"
+      - "src/factory-p5.js"
+      - "migrations/0007_social_scout_p5.sql"
       - "src/council-providers.js"
       - "migrations/0006_council_p4.sql"
       - "wrangler.toml"
@@ -34,6 +36,7 @@ jobs:
           node --check src/ai-worker.js
           node --check src/factory-p3.js
           node --check src/factory-p4.js
+          node --check src/factory-p5.js
           node --check src/council-providers.js
       - name: Wrangler dry-run bundle
         run: npx wrangler deploy --dry-run --outdir .wrangler-dry-run
@@ -43,5 +46,7 @@ jobs:
           grep -q 'FACTORY_PUBLISH_ENABLED = "false"' wrangler.toml
           grep -q 'FACTORY_P4_ENABLED = "false"' wrangler.toml
           grep -q 'FACTORY_P4_AUTO_EXECUTE = "false"' wrangler.toml
+          grep -q 'FACTORY_P5_ENABLED = "true"' wrangler.toml
+          grep -q 'FACTORY_P5_AUTO_SEND = "false"' wrangler.toml
           grep -q 'RUNNINGHUB_TASK_TIMEOUT_SECONDS' wrangler.toml
           grep -q 'RUNNINGHUB_MAX_UPLOAD_MB' wrangler.toml
