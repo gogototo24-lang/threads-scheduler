@@ -3,7 +3,7 @@ import legacy from './worker.js';
 import { generateImage, startVideo, pollVideo, providers, searchTrends, generateDrafts } from './ai-engine.js';
 import { factoryP3Status, factoryP3Create, factoryP3Get, factoryP3List, factoryP3Retry, processFactoryP3 } from './factory-p3.js';
 import { factoryP4Status, factoryP4Create, factoryP4Get, factoryP4List, processFactoryP4 } from './factory-p4.js';
-import { factoryP5Status, factoryP5Ingest, factoryP5BootstrapFromTrends, factoryP5Queue, factoryP5Candidate, factoryP5Review, factoryP5RecordOutcome, factoryP5Insights, factoryP5AccountIngest, factoryP5RelationshipEvent, factoryP5HighReachRadar, factoryP5PatrolQueue, factoryP5QueuePublicAction, factoryP5ActionQueue, processFactoryP5 } from './factory-p5.js';
+import { factoryP5Status, factoryP5Ingest, factoryP5BootstrapFromTrends, factoryP5Queue, factoryP5Candidate, factoryP5Review, factoryP5RecordOutcome, factoryP5Insights, factoryP5AccountIngest, factoryP5RelationshipEvent, factoryP5HighReachRadar, factoryP5PatrolQueue, factoryP5QueuePublicAction, factoryP5ActionQueue, factoryP5CrossPlatformIngest, factoryP5CrossPlatformQueue, processFactoryP5 } from './factory-p5.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -15,6 +15,8 @@ export default {
     if (url.pathname === '/api/factory/p5/patrol' && request.method === 'GET') return guarded(request, env, async () => factoryP5PatrolQueue(env, url.searchParams.get('limit') || 8));
     if (url.pathname === '/api/factory/p5/actions' && request.method === 'GET') return guarded(request, env, async () => factoryP5ActionQueue(env, url.searchParams.get('limit') || 50));
     if (url.pathname === '/api/factory/p5/actions' && request.method === 'POST') return guarded(request, env, () => factoryP5QueuePublicAction(request, env));
+    if (url.pathname === '/api/factory/p5/cross-platform' && request.method === 'GET') return guarded(request, env, async () => factoryP5CrossPlatformQueue(env, url.searchParams.get('limit') || 20));
+    if (url.pathname === '/api/factory/p5/cross-platform' && request.method === 'POST') return guarded(request, env, () => factoryP5CrossPlatformIngest(request, env));
     const p5AccountRel = url.pathname.match(/^\/api\/factory\/p5\/accounts\/([^/]+)\/relationship$/);
     if (p5AccountRel && request.method === 'POST') return guarded(request, env, () => factoryP5RelationshipEvent(request, env, decodeURIComponent(p5AccountRel[1])));
     if (url.pathname === '/api/factory/p5/queue' && request.method === 'GET') return guarded(request, env, async () => factoryP5Queue(env, url.searchParams.get('limit') || 8));
