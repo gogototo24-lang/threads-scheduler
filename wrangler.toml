@@ -28,6 +28,13 @@ RUNNINGHUB_MAX_UPLOAD_MB = "30"
 # 選填：只有你知道實際每 GPU 分鐘成本時才設定，用於「估算 NT$」顯示；0 表示只記 taskCostTime。
 RUNNINGHUB_EST_NTD_PER_GPU_MIN = "0"
 
+# CatPaw AI Factory P5 Social Scout
+# Semi-automatic review-first mode; never sends replies automatically in v0.1.
+FACTORY_P5_ENABLED = "true"
+FACTORY_P5_AUTO_SEND = "false"
+FACTORY_P5_DAILY_REVIEW_LIMIT = "8"
+FACTORY_P5_MIN_SCORE = "62"
+
 # CatPaw AI Factory P4 Multi-LLM Council
 # Safe default: adapters/routes are deployed but no paid model calls run until explicitly enabled.
 FACTORY_P4_ENABLED = "false"
