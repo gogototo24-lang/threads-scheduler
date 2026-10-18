@@ -14,14 +14,14 @@ export default {
     if (url.pathname === '/api/factory/p5/radar' && request.method === 'GET') return guarded(request, env, async () => factoryP5HighReachRadar(env, url.searchParams.get('limit') || 20));
     if (url.pathname === '/api/factory/p5/patrol' && request.method === 'GET') return guarded(request, env, async () => factoryP5PatrolQueue(env, url.searchParams.get('limit') || 8));
     if (url.pathname === '/api/factory/p5/actions' && request.method === 'GET') return guarded(request, env, async () => factoryP5ActionQueue(env, url.searchParams.get('limit') || 50));
-    if (url.pathname === '/api/factory/p5/actions' && request.method === 'POST') return guarded(request, env, () => factoryP5QueuePublicAction(request, env));
+    if (url.pathname === '/api/factory/p5/actions' && request.method === 'POST') return scoutGuarded(request, env, () => factoryP5QueuePublicAction(request, env));
     if (url.pathname === '/api/factory/p5/cross-platform' && request.method === 'GET') return guarded(request, env, async () => factoryP5CrossPlatformQueue(env, url.searchParams.get('limit') || 20));
-    if (url.pathname === '/api/factory/p5/cross-platform' && request.method === 'POST') return guarded(request, env, () => factoryP5CrossPlatformIngest(request, env));
+    if (url.pathname === '/api/factory/p5/cross-platform' && request.method === 'POST') return scoutGuarded(request, env, () => factoryP5CrossPlatformIngest(request, env));
     const p5AccountRel = url.pathname.match(/^\/api\/factory\/p5\/accounts\/([^/]+)\/relationship$/);
     if (p5AccountRel && request.method === 'POST') return guarded(request, env, () => factoryP5RelationshipEvent(request, env, decodeURIComponent(p5AccountRel[1])));
     if (url.pathname === '/api/factory/p5/queue' && request.method === 'GET') return guarded(request, env, async () => factoryP5Queue(env, url.searchParams.get('limit') || 8));
     if (url.pathname === '/api/factory/p5/insights' && request.method === 'GET') return guarded(request, env, async () => factoryP5Insights(env));
-    if (url.pathname === '/api/factory/p5/ingest' && request.method === 'POST') return guarded(request, env, () => factoryP5Ingest(request, env));
+    if (url.pathname === '/api/factory/p5/ingest' && request.method === 'POST') return scoutGuarded(request, env, () => factoryP5Ingest(request, env));
     if (url.pathname === '/api/factory/p5/bootstrap' && request.method === 'POST') return guarded(request, env, async () => factoryP5BootstrapFromTrends(env));
     const p5Match = url.pathname.match(/^\/api\/factory\/p5\/candidates\/([^/]+)(?:\/(review|outcome))?$/);
     if (p5Match && request.method === 'GET' && !p5Match[2]) return guarded(request, env, async () => factoryP5Candidate(env, decodeURIComponent(p5Match[1])));
@@ -64,6 +64,19 @@ export default {
 
 async function guarded(request, env, fn) {
   if (!(await isAdmin(request, env))) return json({ error: '管理密碼錯誤' }, 401);
+  try { return json(await fn()); } catch (e) { return json({ error: safeError(e) }, 400); }
+}
+async function isScout(request, env) {
+  const configured = String(env.P5_SCOUT_KEY || '').trim();
+  if (!configured) return false;
+  const supplied = request.headers.get('x-p5-scout-key') || '';
+  return supplied === configured;
+}
+async function scoutGuarded(request, env, fn) {
+  // Full admins may always operate P5; external scouts only get the narrow write-only scope.
+  if (!(await isAdmin(request, env)) && !(await isScout(request, env))) {
+    return json({ error: 'P5 Scout 授權失敗' }, 401);
+  }
   try { return json(await fn()); } catch (e) { return json({ error: safeError(e) }, 400); }
 }
 async function guardedRedirect(request, env, fn, back) {
