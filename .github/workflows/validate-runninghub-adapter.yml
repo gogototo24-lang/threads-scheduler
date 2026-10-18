@@ -11,6 +11,7 @@ on:
       - "migrations/0007_social_scout_p5.sql"
       - "migrations/0008_social_scout_p5_v02.sql"
       - "migrations/0009_social_public_actions.sql"
+      - "migrations/0010_cross_platform_trend_radar.sql"
       - "src/council-providers.js"
       - "migrations/0006_council_p4.sql"
       - "wrangler.toml"
@@ -54,5 +55,6 @@ jobs:
           grep -q 'FACTORY_P5_ALLOW_QUOTE = "true"' wrangler.toml
           grep -q 'FACTORY_P5_ALLOW_REPOST = "true"' wrangler.toml
           grep -q 'FACTORY_P5_ALLOW_DM = "false"' wrangler.toml
+          grep -q 'FACTORY_P5_ALLOW_EXTERNAL_PUBLISH = "true"' wrangler.toml
           grep -q 'RUNNINGHUB_TASK_TIMEOUT_SECONDS' wrangler.toml
           grep -q 'RUNNINGHUB_MAX_UPLOAD_MB' wrangler.toml
