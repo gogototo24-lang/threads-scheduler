@@ -3,11 +3,21 @@ import legacy from './worker.js';
 import { generateImage, startVideo, pollVideo, providers, searchTrends, generateDrafts } from './ai-engine.js';
 import { factoryP3Status, factoryP3Create, factoryP3Get, factoryP3List, factoryP3Retry, processFactoryP3 } from './factory-p3.js';
 import { factoryP4Status, factoryP4Create, factoryP4Get, factoryP4List, processFactoryP4 } from './factory-p4.js';
+import { factoryP5Status, factoryP5Ingest, factoryP5BootstrapFromTrends, factoryP5Queue, factoryP5Candidate, factoryP5Review, factoryP5RecordOutcome, factoryP5Insights, processFactoryP5 } from './factory-p5.js';
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === '/review' && request.method === 'GET') return reviewPage(request, env);
+    if (url.pathname === '/api/factory/p5/status' && request.method === 'GET') return jsonCors(await factoryP5Status(env));
+    if (url.pathname === '/api/factory/p5/queue' && request.method === 'GET') return guarded(request, env, async () => factoryP5Queue(env, url.searchParams.get('limit') || 8));
+    if (url.pathname === '/api/factory/p5/insights' && request.method === 'GET') return guarded(request, env, async () => factoryP5Insights(env));
+    if (url.pathname === '/api/factory/p5/ingest' && request.method === 'POST') return guarded(request, env, () => factoryP5Ingest(request, env));
+    if (url.pathname === '/api/factory/p5/bootstrap' && request.method === 'POST') return guarded(request, env, async () => factoryP5BootstrapFromTrends(env));
+    const p5Match = url.pathname.match(/^\/api\/factory\/p5\/candidates\/([^/]+)(?:\/(review|outcome))?$/);
+    if (p5Match && request.method === 'GET' && !p5Match[2]) return guarded(request, env, async () => factoryP5Candidate(env, decodeURIComponent(p5Match[1])));
+    if (p5Match && request.method === 'POST' && p5Match[2] === 'review') return guarded(request, env, () => factoryP5Review(request, env, decodeURIComponent(p5Match[1])));
+    if (p5Match && request.method === 'POST' && p5Match[2] === 'outcome') return guarded(request, env, () => factoryP5RecordOutcome(request, env, decodeURIComponent(p5Match[1])));
     if (url.pathname === '/api/factory/p4/status' && request.method === 'GET') return jsonCors(await factoryP4Status(env));
     if (url.pathname === '/api/factory/p4/jobs' && request.method === 'GET') return guarded(request, env, async () => factoryP4List(env, url.searchParams.get('limit') || 20));
     if (url.pathname === '/api/factory/p4/jobs' && request.method === 'POST') return guarded(request, env, () => factoryP4Create(request, env));
@@ -38,6 +48,7 @@ export default {
       await processMediaJobs(env);
       await processFactoryP3(env);
       await processFactoryP4(env);
+      await processFactoryP5(env);
     })());
   }
 };
