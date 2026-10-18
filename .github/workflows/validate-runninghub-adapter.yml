@@ -56,5 +56,8 @@ jobs:
           grep -q 'FACTORY_P5_ALLOW_REPOST = "true"' wrangler.toml
           grep -q 'FACTORY_P5_ALLOW_DM = "false"' wrangler.toml
           grep -q 'FACTORY_P5_ALLOW_EXTERNAL_PUBLISH = "true"' wrangler.toml
+          grep -q 'x-p5-scout-key' src/ai-worker.js
+          grep -q 'P5_SCOUT_KEY' src/ai-worker.js
+          ! grep -Eq '^P5_SCOUT_KEY\s*=' wrangler.toml
           grep -q 'RUNNINGHUB_TASK_TIMEOUT_SECONDS' wrangler.toml
           grep -q 'RUNNINGHUB_MAX_UPLOAD_MB' wrangler.toml
