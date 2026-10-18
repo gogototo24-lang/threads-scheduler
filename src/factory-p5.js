@@ -10,9 +10,15 @@ function config(env){
   const minScore=Math.max(0,Math.min(100,Number(env.FACTORY_P5_MIN_SCORE||62)));
   return {
     phase:'P5',
-    version:'0.2',
+    version:'0.3',
     enabled,
     auto_send:autoSend,
+    allow_reply:String(env.FACTORY_P5_ALLOW_REPLY||'').toLowerCase()==='true',
+    allow_quote:String(env.FACTORY_P5_ALLOW_QUOTE||'').toLowerCase()==='true',
+    allow_repost:String(env.FACTORY_P5_ALLOW_REPOST||'').toLowerCase()==='true',
+    allow_dm:false,
+    hourly_action_limit:Math.max(1,Math.min(10,Number(env.FACTORY_P5_HOURLY_ACTION_LIMIT||10))),
+    same_author_cooldown_hours:Math.max(1,Math.min(24,Number(env.FACTORY_P5_SAME_AUTHOR_COOLDOWN_HOURS||6))),
     platform:'threads',
     mode:'semi_automatic_review_first',
     daily_review_limit:maxDaily,
@@ -22,7 +28,7 @@ function config(env){
       'no_impersonation',
       'no_mass_duplicate_replies',
       'political_or_high_risk_requires_human_review',
-      'auto_send_disabled_by_default',
+      'direct_messages_permanently_disabled',
       'same_author_rate_limited'
     ]
   };
@@ -231,7 +237,7 @@ export async function factoryP5PatrolQueue(env,limit=8){
      LIMIT ?`
   ).bind(n).all()).results||[];
   for(const r of rows) r.metrics=safeJson(r.metrics_json,{});
-  return {items:rows,auto_send:false};
+  return {items:rows,auto_send:cfg.auto_send};
 }
 
 function draftVariants(candidate){
@@ -321,18 +327,181 @@ async function addCandidate(env,input,sourceType='manual'){
     breakout_score:breakout,
     relationship_score:relationship,
     patrol_score:patrol,
+    source_thread_id:String(input.source_thread_id||'').trim()||null,
     status:'scored'
   };
   await env.DB.prepare(
-    "INSERT INTO social_candidates (id,platform,source_type,source_url,source_author,source_text,topic,universe,metrics_json,heat_score,relevance_score,replyability_score,risk_score,traffic_score,total_score,risk_level,account_id,breakout_score,relationship_score,patrol_score,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    "INSERT INTO social_candidates (id,platform,source_type,source_url,source_author,source_text,topic,universe,metrics_json,heat_score,relevance_score,replyability_score,risk_score,traffic_score,total_score,risk_level,account_id,breakout_score,relationship_score,patrol_score,source_thread_id,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
   ).bind(
     candidate.id,candidate.platform,candidate.source_type,candidate.source_url,candidate.source_author,
     candidate.source_text,candidate.topic,candidate.universe,candidate.metrics_json,
     candidate.heat_score,candidate.relevance_score,candidate.replyability_score,candidate.risk_score,
     candidate.traffic_score,candidate.total_score,candidate.risk_level,candidate.account_id,
-    candidate.breakout_score,candidate.relationship_score,candidate.patrol_score,candidate.status,now(),now()
+    candidate.breakout_score,candidate.relationship_score,candidate.patrol_score,candidate.source_thread_id,candidate.status,now(),now()
   ).run();
   return candidate;
+}
+
+
+async function getSetting(env,key){
+  const row=await env.DB.prepare("SELECT value FROM settings WHERE key=?").bind(key).first();
+  return row?.value||null;
+}
+
+async function threadsPublishAction(env,action){
+  const token=await getSetting(env,'threads_access_token');
+  if(!token) throw new Error('尚未連接 Threads 帳號');
+  const graph='https://graph.threads.net/v1.0';
+  const target=String(action.target_thread_id||'').trim();
+  if(!target) throw new Error('缺少 target_thread_id');
+
+  if(action.action_type==='repost'){
+    const r=await fetch(`${graph}/${encodeURIComponent(target)}/repost?access_token=${encodeURIComponent(token)}`,{method:'POST'});
+    const data=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(data?.error?.message||`Threads repost HTTP ${r.status}`);
+    return {thread_id:String(data?.id||target),permalink:null};
+  }
+
+  const params=new URLSearchParams({
+    access_token:token,
+    media_type:'TEXT',
+    text:String(action.text||'').slice(0,500)
+  });
+  if(action.action_type==='reply') params.set('reply_to_id',target);
+  if(action.action_type==='quote') params.set('quote_post_id',target);
+
+  const created=await fetch(`${graph}/me/threads?${params}`,{method:'POST'});
+  const createdJson=await created.json().catch(()=>({}));
+  if(!created.ok||!createdJson.id) throw new Error(createdJson?.error?.message||'建立 Threads 容器失敗');
+
+  const published=await fetch(`${graph}/me/threads_publish?${new URLSearchParams({
+    access_token:token,
+    creation_id:String(createdJson.id)
+  })}`,{method:'POST'});
+  const pub=await published.json().catch(()=>({}));
+  if(!published.ok||!pub.id) throw new Error(pub?.error?.message||'Threads 發布失敗');
+  return {thread_id:String(pub.id),permalink:null};
+}
+
+async function canSendNow(env,candidate,cfg){
+  if(candidate.risk_level==='high') return {ok:false,reason:'high_risk_requires_human_review'};
+  if(!candidate.source_thread_id) return {ok:false,reason:'missing_source_thread_id'};
+
+  const hourAgo=new Date(Date.now()-3600000).toISOString();
+  const sentHour=Number((await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM social_actions WHERE status='sent' AND sent_at>=?"
+  ).bind(hourAgo).first())?.n||0);
+  if(sentHour>=cfg.hourly_action_limit) return {ok:false,reason:'hourly_rate_limit'};
+
+  const cooldown=new Date(Date.now()-cfg.same_author_cooldown_hours*3600000).toISOString();
+  const recent=await env.DB.prepare(
+    `SELECT a.id FROM social_actions a
+     JOIN social_candidates c ON c.id=a.candidate_id
+     WHERE a.status='sent' AND c.source_author=? AND a.sent_at>=?
+     LIMIT 1`
+  ).bind(candidate.source_author,cooldown).first();
+  if(recent) return {ok:false,reason:'same_author_cooldown'};
+
+  return {ok:true};
+}
+
+async function enqueueAutoReply(env,candidate,cfg){
+  if(!cfg.auto_send||!cfg.allow_reply) return {queued:false,reason:'auto_reply_disabled'};
+  const gate=await canSendNow(env,candidate,cfg);
+  if(!gate.ok) return {queued:false,reason:gate.reason};
+
+  const draft=await env.DB.prepare(
+    `SELECT * FROM social_reply_drafts
+     WHERE candidate_id=? AND status='pending_review' AND variant IN ('natural','conversation')
+     ORDER BY CASE variant WHEN 'natural' THEN 1 ELSE 2 END, created_at
+     LIMIT 1`
+  ).bind(candidate.id).first();
+  if(!draft) return {queued:false,reason:'no_safe_draft'};
+
+  const duplicate=await env.DB.prepare(
+    "SELECT id FROM social_actions WHERE text=? AND status IN ('queued','sent') LIMIT 1"
+  ).bind(draft.reply_text).first();
+  if(duplicate) return {queued:false,reason:'duplicate_text'};
+
+  const actionId=id('act');
+  await env.DB.prepare(
+    `INSERT INTO social_actions
+      (id,candidate_id,reply_draft_id,platform,action_type,target_thread_id,text,status,risk_level,scheduled_at,created_at,updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).bind(
+    actionId,candidate.id,draft.id,'threads','reply',candidate.source_thread_id,draft.reply_text,
+    'queued',candidate.risk_level,now(),now(),now()
+  ).run();
+  await env.DB.prepare("UPDATE social_reply_drafts SET status='auto_approved',approved_at=?,updated_at=? WHERE id=?")
+    .bind(now(),now(),draft.id).run();
+  return {queued:true,action_id:actionId};
+}
+
+export async function factoryP5QueuePublicAction(request,env){
+  const cfg=config(env);
+  if(!cfg.enabled||!cfg.auto_send) throw new Error('P5 公開互動尚未啟用');
+  const body=await request.json();
+  const type=String(body.action_type||'').toLowerCase();
+  if(!['reply','quote','repost'].includes(type)) throw new Error('action_type 只允許 reply/quote/repost');
+  if(type==='reply'&&!cfg.allow_reply) throw new Error('reply 尚未開放');
+  if(type==='quote'&&!cfg.allow_quote) throw new Error('quote 尚未開放');
+  if(type==='repost'&&!cfg.allow_repost) throw new Error('repost 尚未開放');
+
+  const target=String(body.target_thread_id||'').trim();
+  if(!target) throw new Error('target_thread_id 不可空白');
+  const risk=String(body.risk_level||'low').toLowerCase();
+  if(risk==='high') throw new Error('高風險內容不得自動送出');
+
+  const text=type==='repost'?'':String(body.text||'').trim();
+  if(type!=='repost'&&text.length<2) throw new Error('text 太短');
+  if(/私訊|dm me|direct message/i.test(text)) throw new Error('P5 禁止私訊導流');
+
+  const actionId=id('act');
+  await env.DB.prepare(
+    `INSERT INTO social_actions
+      (id,candidate_id,reply_draft_id,platform,action_type,target_thread_id,text,status,risk_level,scheduled_at,created_at,updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).bind(actionId,body.candidate_id||null,body.reply_draft_id||null,'threads',type,target,text,'queued',risk,body.scheduled_at||now(),now(),now()).run();
+  return {ok:true,action_id:actionId,status:'queued'};
+}
+
+export async function factoryP5ActionQueue(env,limit=50){
+  const n=Math.max(1,Math.min(100,Number(limit)||50));
+  const rows=(await env.DB.prepare(
+    "SELECT * FROM social_actions ORDER BY created_at DESC LIMIT ?"
+  ).bind(n).all()).results||[];
+  return {actions:rows};
+}
+
+async function processPublicActions(env,cfg){
+  if(!cfg.auto_send) return {sent:0,failed:0};
+  const due=(await env.DB.prepare(
+    "SELECT * FROM social_actions WHERE status='queued' AND (scheduled_at IS NULL OR scheduled_at<=?) ORDER BY created_at LIMIT ?"
+  ).bind(now(),cfg.hourly_action_limit).all()).results||[];
+  let sent=0,failed=0;
+  for(const action of due){
+    if(action.risk_level==='high'){
+      await env.DB.prepare("UPDATE social_actions SET status='blocked',error=?,updated_at=? WHERE id=?")
+        .bind('high_risk_requires_human_review',now(),action.id).run();
+      continue;
+    }
+    try{
+      const out=await threadsPublishAction(env,action);
+      await env.DB.prepare(
+        "UPDATE social_actions SET status='sent',external_thread_id=?,permalink=?,sent_at=?,error=NULL,updated_at=? WHERE id=?"
+      ).bind(out.thread_id,out.permalink,now(),now(),action.id).run();
+      if(action.candidate_id){
+        await env.DB.prepare("UPDATE social_candidates SET status='sent',updated_at=? WHERE id=?")
+          .bind(now(),action.candidate_id).run();
+      }
+      sent++;
+    }catch(e){
+      await env.DB.prepare("UPDATE social_actions SET status='failed',error=?,updated_at=? WHERE id=?")
+        .bind(String(e).slice(0,700),now(),action.id).run();
+      failed++;
+    }
+  }
+  return {sent,failed};
 }
 
 export async function factoryP5Status(env){
@@ -353,7 +522,7 @@ export async function factoryP5Status(env){
     ready:cfg.enabled&&dbReady,
     counts,
     note:cfg.enabled
-      ? 'P5 v0.2 已啟用：High-Reach Radar、Relationship Score、Patrol Queue 可用；不會自動送出回覆。'
+      ? 'P5 v0.3 已啟用：公開 reply/quote/repost 可依風險與速率限制自動執行；DM 永久關閉。'
       : 'P5 已部署但保持關閉，不會掃描或送出社群互動。'
   };
 }
@@ -491,16 +660,17 @@ export async function factoryP5Insights(env){
 export async function processFactoryP5(env){
   const cfg=config(env);
   if(!cfg.enabled) return {enabled:false,processed:0};
-  // P5 v0.1 intentionally does not fetch third-party social pages or send replies.
-  // It processes candidates already ingested by the trend radar/manual/API sources.
   const undrafted=(await env.DB.prepare(
-    "SELECT * FROM social_candidates WHERE status='scored' AND total_score>=? ORDER BY total_score DESC LIMIT ?"
+    "SELECT * FROM social_candidates WHERE status='scored' AND total_score>=? ORDER BY patrol_score DESC,total_score DESC LIMIT ?"
   ).bind(cfg.min_score,cfg.daily_review_limit).all()).results||[];
-  let processed=0;
-  for(const c of undrafted){
-    await insertDrafts(env,c);
-    await env.DB.prepare("UPDATE social_candidates SET status='drafted',updated_at=? WHERE id=?").bind(now(),c.id).run();
+  let processed=0,autoQueued=0;
+  for(const candidate of undrafted){
+    await insertDrafts(env,candidate);
+    await env.DB.prepare("UPDATE social_candidates SET status='drafted',updated_at=? WHERE id=?").bind(now(),candidate.id).run();
+    const queued=await enqueueAutoReply(env,candidate,cfg);
+    if(queued.queued) autoQueued++;
     processed++;
   }
-  return {enabled:true,processed,auto_send:false};
+  const actions=await processPublicActions(env,cfg);
+  return {enabled:true,processed,auto_queued:autoQueued,auto_send:cfg.auto_send,...actions};
 }
