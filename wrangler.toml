@@ -29,9 +29,15 @@ RUNNINGHUB_MAX_UPLOAD_MB = "30"
 RUNNINGHUB_EST_NTD_PER_GPU_MIN = "0"
 
 # CatPaw AI Factory P5 Social Scout
-# Semi-automatic review-first mode; never sends replies automatically in v0.1.
+# Public interaction mode: reply/quote/repost enabled with rate/risk gates; DMs permanently disabled.
 FACTORY_P5_ENABLED = "true"
-FACTORY_P5_AUTO_SEND = "false"
+FACTORY_P5_AUTO_SEND = "true"
+FACTORY_P5_ALLOW_REPLY = "true"
+FACTORY_P5_ALLOW_QUOTE = "true"
+FACTORY_P5_ALLOW_REPOST = "true"
+FACTORY_P5_ALLOW_DM = "false"
+FACTORY_P5_HOURLY_ACTION_LIMIT = "10"
+FACTORY_P5_SAME_AUTHOR_COOLDOWN_HOURS = "6"
 FACTORY_P5_DAILY_REVIEW_LIMIT = "8"
 FACTORY_P5_MIN_SCORE = "62"
 
