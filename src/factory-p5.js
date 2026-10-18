@@ -10,13 +10,14 @@ function config(env){
   const minScore=Math.max(0,Math.min(100,Number(env.FACTORY_P5_MIN_SCORE||62)));
   return {
     phase:'P5',
-    version:'0.3',
+    version:'0.4',
     enabled,
     auto_send:autoSend,
     allow_reply:String(env.FACTORY_P5_ALLOW_REPLY||'').toLowerCase()==='true',
     allow_quote:String(env.FACTORY_P5_ALLOW_QUOTE||'').toLowerCase()==='true',
     allow_repost:String(env.FACTORY_P5_ALLOW_REPOST||'').toLowerCase()==='true',
     allow_dm:false,
+    allow_external_publish:String(env.FACTORY_P5_ALLOW_EXTERNAL_PUBLISH||'').toLowerCase()==='true',
     hourly_action_limit:Math.max(1,Math.min(10,Number(env.FACTORY_P5_HOURLY_ACTION_LIMIT||10))),
     same_author_cooldown_hours:Math.max(1,Math.min(24,Number(env.FACTORY_P5_SAME_AUTHOR_COOLDOWN_HOURS||6))),
     platform:'threads',
@@ -343,6 +344,127 @@ async function addCandidate(env,input,sourceType='manual'){
 }
 
 
+
+function detectPlatformFromUrl(url){
+  const host=String(url||'').toLowerCase();
+  if(host.includes('youtube.com')||host.includes('youtu.be')) return 'youtube';
+  if(host.includes('x.com')||host.includes('twitter.com')) return 'x';
+  if(host.includes('instagram.com')) return 'instagram';
+  if(host.includes('reddit.com')) return 'reddit';
+  if(host.includes('threads.net')||host.includes('threads.com')) return 'threads';
+  return 'web';
+}
+
+function externalHeat(metrics){
+  const views=Math.max(0,Number(metrics?.views||0));
+  const likes=Math.max(0,Number(metrics?.likes||0));
+  const comments=Math.max(0,Number(metrics?.comments||metrics?.replies||0));
+  const shares=Math.max(0,Number(metrics?.shares||metrics?.reposts||0));
+  return Math.round(clamp(Math.log10(views+1)*18 + Math.log10(likes+1)*9 + comments*0.6 + shares*1.2));
+}
+
+function remixExternalItem(item){
+  const title=cleanExcerpt(item.title||item.source_summary||'這個話題',72);
+  const summary=cleanExcerpt(item.source_summary||'',150);
+  const source=String(item.source_platform||'web').toUpperCase();
+  const url=String(item.source_url||'').trim();
+  const universe=String(item.universe||'喵台灣宇宙');
+  const hook=universe==='貓掌江湖'
+    ? `江湖巡到 ${source}，這題「${title}」太有戲了。`
+    : `喵台灣巡到 ${source}，這題「${title}」真的很值得聊。`;
+  const body=summary
+    ? `${summary}\n\n換成喵台灣版本，我們關心的是：這件事如果落到台灣日常，大家第一個反應會是什麼？`
+    : `換成喵台灣版本，我們關心的是：這件事如果落到台灣日常，大家第一個反應會是什麼？`;
+  return `${hook}\n\n${body}\n\n來源：${url}`.slice(0,480);
+}
+
+export async function factoryP5CrossPlatformIngest(request,env){
+  const cfg=config(env);
+  if(!cfg.enabled) throw new Error('P5 尚未啟用');
+  const body=await request.json();
+  const list=Array.isArray(body.items)?body.items:[body];
+  if(!list.length||list.length>50) throw new Error('items 必須為 1~50 筆');
+
+  const created=[];
+  for(const raw of list){
+    const sourceUrl=String(raw.source_url||'').trim();
+    let u; try{u=new URL(sourceUrl)}catch{throw new Error('source_url 格式錯誤')}
+    if(u.protocol!=='https:') throw new Error('source_url 必須為 HTTPS');
+
+    const platform=String(raw.source_platform||detectPlatformFromUrl(sourceUrl)).toLowerCase();
+    const sourceSummary=String(raw.source_summary||raw.summary||'').trim().slice(0,1200);
+    const title=String(raw.title||'').trim().slice(0,240);
+    const sourceText=`${title}\n${sourceSummary}`.trim();
+    if(sourceText.length<8) throw new Error('外部內容摘要太短');
+
+    const scored=scoreCandidate({
+      source_text:sourceText,
+      topic:raw.topic||title,
+      metrics:raw.metrics||{},
+      age_hours:raw.age_hours
+    });
+    const heat=Math.max(scored.heat,externalHeat(raw.metrics||{}));
+    const risk=scored.riskLevel;
+    const item={
+      id:id('xplat'),
+      source_platform:platform,
+      source_url:sourceUrl,
+      source_author:String(raw.source_author||'').slice(0,160),
+      title,
+      source_summary:sourceSummary,
+      content_type:String(raw.content_type||'post').slice(0,40),
+      metrics_json:JSON.stringify(raw.metrics||{}),
+      heat_score:heat,
+      relevance_score:scored.relevance,
+      risk_level:risk,
+      universe:String(raw.universe||'喵台灣宇宙').slice(0,80)
+    };
+    item.remix_text=remixExternalItem(item);
+
+    await env.DB.prepare(
+      `INSERT INTO social_cross_platform_items
+        (id,source_platform,source_url,source_author,title,source_summary,content_type,metrics_json,heat_score,relevance_score,risk_level,universe,remix_text,status,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(source_url) DO UPDATE SET
+        source_author=excluded.source_author,title=excluded.title,source_summary=excluded.source_summary,
+        content_type=excluded.content_type,metrics_json=excluded.metrics_json,heat_score=excluded.heat_score,
+        relevance_score=excluded.relevance_score,risk_level=excluded.risk_level,universe=excluded.universe,
+        remix_text=excluded.remix_text,updated_at=excluded.updated_at`
+    ).bind(
+      item.id,item.source_platform,item.source_url,item.source_author,item.title,item.source_summary,
+      item.content_type,item.metrics_json,item.heat_score,item.relevance_score,item.risk_level,item.universe,
+      item.remix_text,'scored',now(),now()
+    ).run();
+
+    let actionId=null;
+    const eligible=cfg.allow_external_publish && cfg.auto_send && risk==='low' && heat>=55 && scored.relevance>=55;
+    if(eligible){
+      actionId=id('act');
+      await env.DB.prepare(
+        `INSERT INTO social_actions
+          (id,candidate_id,reply_draft_id,platform,action_type,target_thread_id,text,status,risk_level,scheduled_at,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).bind(actionId,null,null,'threads','original_post',null,item.remix_text,'queued','low',now(),now(),now()).run();
+      await env.DB.prepare("UPDATE social_cross_platform_items SET status='queued',action_id=?,updated_at=? WHERE source_url=?")
+        .bind(actionId,now(),sourceUrl).run();
+    }
+    created.push({source_url:sourceUrl,source_platform:platform,heat_score:heat,relevance_score:scored.relevance,risk_level:risk,queued:!!actionId,action_id:actionId});
+  }
+  return {ok:true,created};
+}
+
+export async function factoryP5CrossPlatformQueue(env,limit=20){
+  const n=Math.max(1,Math.min(100,Number(limit)||20));
+  const rows=(await env.DB.prepare(
+    `SELECT * FROM social_cross_platform_items
+     ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'scored' THEN 1 ELSE 2 END,
+              heat_score DESC,relevance_score DESC,created_at DESC
+     LIMIT ?`
+  ).bind(n).all()).results||[];
+  for(const r of rows) r.metrics=safeJson(r.metrics_json,{});
+  return {items:rows};
+}
+
 async function getSetting(env,key){
   const row=await env.DB.prepare("SELECT value FROM settings WHERE key=?").bind(key).first();
   return row?.value||null;
@@ -353,9 +475,9 @@ async function threadsPublishAction(env,action){
   if(!token) throw new Error('尚未連接 Threads 帳號');
   const graph='https://graph.threads.net/v1.0';
   const target=String(action.target_thread_id||'').trim();
-  if(!target) throw new Error('缺少 target_thread_id');
 
   if(action.action_type==='repost'){
+    if(!target) throw new Error('缺少 target_thread_id');
     const r=await fetch(`${graph}/${encodeURIComponent(target)}/repost?access_token=${encodeURIComponent(token)}`,{method:'POST'});
     const data=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(data?.error?.message||`Threads repost HTTP ${r.status}`);
@@ -367,8 +489,14 @@ async function threadsPublishAction(env,action){
     media_type:'TEXT',
     text:String(action.text||'').slice(0,500)
   });
-  if(action.action_type==='reply') params.set('reply_to_id',target);
-  if(action.action_type==='quote') params.set('quote_post_id',target);
+  if(action.action_type==='reply'){
+    if(!target) throw new Error('缺少 target_thread_id');
+    params.set('reply_to_id',target);
+  }
+  if(action.action_type==='quote'){
+    if(!target) throw new Error('缺少 target_thread_id');
+    params.set('quote_post_id',target);
+  }
 
   const created=await fetch(`${graph}/me/threads?${params}`,{method:'POST'});
   const createdJson=await created.json().catch(()=>({}));
@@ -522,7 +650,7 @@ export async function factoryP5Status(env){
     ready:cfg.enabled&&dbReady,
     counts,
     note:cfg.enabled
-      ? 'P5 v0.3 已啟用：公開 reply/quote/repost 可依風險與速率限制自動執行；DM 永久關閉。'
+      ? 'P5 v0.4 已啟用：Threads 海巡 + Cross-Platform Trend Radar，可將外部熱門內容轉成喵台灣原創 Threads 貼文；DM 永久關閉。'
       : 'P5 已部署但保持關閉，不會掃描或送出社群互動。'
   };
 }
