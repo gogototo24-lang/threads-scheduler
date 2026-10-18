@@ -10,7 +10,7 @@ function config(env){
   const minScore=Math.max(0,Math.min(100,Number(env.FACTORY_P5_MIN_SCORE||62)));
   return {
     phase:'P5',
-    version:'0.1',
+    version:'0.2',
     enabled,
     auto_send:autoSend,
     platform:'threads',
@@ -69,6 +69,169 @@ function scoreCandidate(input){
 
 function cleanExcerpt(text,max=70){
   return String(text||'').replace(/\s+/g,' ').trim().slice(0,max);
+}
+
+function accountReachScore(input){
+  const avgViews=Math.max(0,Number(input.avg_views||0));
+  const avgLikes=Math.max(0,Number(input.avg_likes||0));
+  const avgReplies=Math.max(0,Number(input.avg_replies||0));
+  const avgReposts=Math.max(0,Number(input.avg_reposts||0));
+  const postsPerDay=Math.max(0,Number(input.posts_per_day||0));
+  const viewScore=clamp(Math.log10(avgViews+1)*20);
+  const conversationScore=clamp(avgReplies*3+avgReposts*4);
+  const frequencyScore=clamp(postsPerDay*12);
+  const engagementRate=avgViews>0?((avgLikes+avgReplies*2+avgReposts*2.5)/avgViews)*1000:0;
+  const engagementScore=clamp(engagementRate*12);
+  return Math.round(clamp(
+    viewScore*0.35+conversationScore*0.25+frequencyScore*0.20+engagementScore*0.20
+  ));
+}
+
+function breakoutScore(metrics,account){
+  const views=Math.max(0,Number(metrics?.views||0));
+  const replies=Math.max(0,Number(metrics?.replies||0));
+  const reposts=Math.max(0,Number(metrics?.reposts||0));
+  const avgViews=Math.max(0,Number(account?.avg_views||0));
+  const relative=avgViews>0?clamp((views/avgViews)*45):clamp(Math.log10(views+1)*20);
+  const conversation=views>0?clamp(((replies+reposts*1.5)/views)*5000):clamp(replies*4+reposts*5);
+  return Math.round(clamp(relative*0.7+conversation*0.3));
+}
+
+function patrolScore(base,breakout,reach,relationship,risk){
+  return Math.round(clamp(
+    base*0.42+breakout*0.25+reach*0.20+relationship*0.13-risk*0.15
+  ));
+}
+
+function normalizeHandle(v){
+  return String(v||'').trim().replace(/^@/,'').toLowerCase().slice(0,160);
+}
+
+async function findAccount(env,platform,handle){
+  const h=normalizeHandle(handle);
+  if(!h) return null;
+  return env.DB.prepare(
+    "SELECT * FROM social_accounts WHERE platform=? AND lower(handle)=? LIMIT 1"
+  ).bind(String(platform||'threads').toLowerCase(),h).first();
+}
+
+async function recalcRelationship(env,accountId){
+  const row=await env.DB.prepare(
+    "SELECT COALESCE(SUM(weight),0) AS score FROM social_relationship_events WHERE account_id=?"
+  ).bind(accountId).first();
+  const score=Math.round(clamp(Number(row?.score||0),0,100));
+  await env.DB.prepare(
+    "UPDATE social_accounts SET relationship_score=?,updated_at=? WHERE id=?"
+  ).bind(score,now(),accountId).run();
+  return score;
+}
+
+export async function factoryP5AccountIngest(request,env){
+  const cfg=config(env);
+  if(!cfg.enabled) throw new Error('P5 尚未啟用');
+  const body=await request.json();
+  const platform=String(body.platform||'threads').toLowerCase();
+  const handle=normalizeHandle(body.handle);
+  if(!handle) throw new Error('handle 不可空白');
+  const metrics={
+    followers:Math.max(0,Number(body.followers||0)),
+    avg_views:Math.max(0,Number(body.avg_views||0)),
+    avg_likes:Math.max(0,Number(body.avg_likes||0)),
+    avg_replies:Math.max(0,Number(body.avg_replies||0)),
+    avg_reposts:Math.max(0,Number(body.avg_reposts||0)),
+    posts_per_day:Math.max(0,Number(body.posts_per_day||0)),
+    observed_posts:Math.max(0,Number(body.observed_posts||0))
+  };
+  const reach=accountReachScore(metrics);
+  const existing=await findAccount(env,platform,handle);
+  const accountId=existing?.id||id('acct');
+  const profileUrl=String(body.profile_url||'').trim()||null;
+  if(profileUrl){
+    let u; try{u=new URL(profileUrl)}catch{throw new Error('profile_url 格式錯誤')}
+    if(u.protocol!=='https:') throw new Error('profile_url 必須為 HTTPS');
+  }
+  await env.DB.prepare(
+    `INSERT INTO social_accounts
+      (id,platform,handle,display_name,profile_url,category,followers,avg_views,avg_likes,avg_replies,avg_reposts,posts_per_day,observed_posts,reach_score,relationship_score,last_seen_at,metadata_json,created_at,updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(platform,handle) DO UPDATE SET
+      display_name=excluded.display_name,
+      profile_url=excluded.profile_url,
+      category=excluded.category,
+      followers=excluded.followers,
+      avg_views=excluded.avg_views,
+      avg_likes=excluded.avg_likes,
+      avg_replies=excluded.avg_replies,
+      avg_reposts=excluded.avg_reposts,
+      posts_per_day=excluded.posts_per_day,
+      observed_posts=excluded.observed_posts,
+      reach_score=excluded.reach_score,
+      last_seen_at=excluded.last_seen_at,
+      metadata_json=excluded.metadata_json,
+      updated_at=excluded.updated_at`
+  ).bind(
+    accountId,platform,handle,String(body.display_name||'').slice(0,160),profileUrl,
+    String(body.category||'').slice(0,100),metrics.followers,metrics.avg_views,metrics.avg_likes,
+    metrics.avg_replies,metrics.avg_reposts,metrics.posts_per_day,metrics.observed_posts,reach,
+    Number(existing?.relationship_score||0),now(),JSON.stringify(body.metadata||{}),existing?.created_at||now(),now()
+  ).run();
+  return {ok:true,account_id:accountId,handle,reach_score:reach,relationship_score:Number(existing?.relationship_score||0)};
+}
+
+export async function factoryP5RelationshipEvent(request,env,accountId){
+  const body=await request.json();
+  const weights={
+    replied_to_us:25,
+    we_replied:10,
+    liked_us:8,
+    reposted_us:20,
+    followed_us:30,
+    positive_reply_outcome:15,
+    neutral_contact:3,
+    ignored:-2
+  };
+  const type=String(body.event_type||'');
+  if(!(type in weights)) throw new Error('不支援的 relationship event_type');
+  const account=await env.DB.prepare("SELECT id FROM social_accounts WHERE id=?").bind(accountId).first();
+  if(!account) throw new Error('找不到 social account');
+  const sourceUrl=String(body.source_url||'').trim()||null;
+  if(sourceUrl){
+    let u; try{u=new URL(sourceUrl)}catch{throw new Error('source_url 格式錯誤')}
+    if(u.protocol!=='https:') throw new Error('source_url 必須為 HTTPS');
+  }
+  await env.DB.prepare(
+    "INSERT INTO social_relationship_events (id,account_id,event_type,weight,source_url,note,occurred_at,created_at) VALUES (?,?,?,?,?,?,?,?)"
+  ).bind(id('rel'),accountId,type,weights[type],sourceUrl,String(body.note||'').slice(0,500),body.occurred_at||now(),now()).run();
+  const score=await recalcRelationship(env,accountId);
+  return {ok:true,account_id:accountId,relationship_score:score};
+}
+
+export async function factoryP5HighReachRadar(env,limit=20){
+  const n=Math.max(1,Math.min(50,Number(limit)||20));
+  const rows=(await env.DB.prepare(
+    `SELECT id,platform,handle,display_name,profile_url,category,followers,avg_views,avg_replies,
+      avg_reposts,posts_per_day,observed_posts,reach_score,relationship_score,last_seen_at
+     FROM social_accounts
+     ORDER BY reach_score DESC,relationship_score DESC,last_seen_at DESC
+     LIMIT ?`
+  ).bind(n).all()).results||[];
+  return {accounts:rows};
+}
+
+export async function factoryP5PatrolQueue(env,limit=8){
+  const cfg=config(env);
+  const n=Math.max(1,Math.min(cfg.daily_review_limit,Number(limit)||cfg.daily_review_limit));
+  const rows=(await env.DB.prepare(
+    `SELECT c.*,a.handle,a.display_name,a.profile_url,a.reach_score AS account_reach_score,
+      a.relationship_score AS account_relationship_score
+     FROM social_candidates c
+     LEFT JOIN social_accounts a ON a.id=c.account_id
+     WHERE c.status IN ('drafted','approved_for_manual_send')
+     ORDER BY c.patrol_score DESC,c.breakout_score DESC,c.total_score DESC,c.created_at DESC
+     LIMIT ?`
+  ).bind(n).all()).results||[];
+  for(const r of rows) r.metrics=safeJson(r.metrics_json,{});
+  return {items:rows,auto_send:false};
 }
 
 function draftVariants(candidate){
@@ -131,9 +294,15 @@ async function addCandidate(env,input,sourceType='manual'){
   if(u.protocol!=='https:') throw new Error('source_url 必須為 HTTPS');
 
   const scored=scoreCandidate(input);
+  const platform=String(input.platform||'threads').toLowerCase();
+  const account=await findAccount(env,platform,input.source_author);
+  const breakout=breakoutScore(input.metrics||{},account);
+  const relationship=Math.round(clamp(Number(account?.relationship_score||0)));
+  const reach=Math.round(clamp(Number(account?.reach_score||0)));
+  const patrol=patrolScore(scored.total,breakout,reach,relationship,scored.risk);
   const candidate={
     id:id('soc'),
-    platform:String(input.platform||'threads').toLowerCase(),
+    platform,
     source_type:sourceType,
     source_url:sourceUrl,
     source_author:String(input.source_author||'').slice(0,160),
@@ -148,15 +317,20 @@ async function addCandidate(env,input,sourceType='manual'){
     traffic_score:scored.traffic,
     total_score:scored.total,
     risk_level:scored.riskLevel,
+    account_id:account?.id||null,
+    breakout_score:breakout,
+    relationship_score:relationship,
+    patrol_score:patrol,
     status:'scored'
   };
   await env.DB.prepare(
-    "INSERT INTO social_candidates (id,platform,source_type,source_url,source_author,source_text,topic,universe,metrics_json,heat_score,relevance_score,replyability_score,risk_score,traffic_score,total_score,risk_level,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    "INSERT INTO social_candidates (id,platform,source_type,source_url,source_author,source_text,topic,universe,metrics_json,heat_score,relevance_score,replyability_score,risk_score,traffic_score,total_score,risk_level,account_id,breakout_score,relationship_score,patrol_score,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
   ).bind(
     candidate.id,candidate.platform,candidate.source_type,candidate.source_url,candidate.source_author,
     candidate.source_text,candidate.topic,candidate.universe,candidate.metrics_json,
     candidate.heat_score,candidate.relevance_score,candidate.replyability_score,candidate.risk_score,
-    candidate.traffic_score,candidate.total_score,candidate.risk_level,candidate.status,now(),now()
+    candidate.traffic_score,candidate.total_score,candidate.risk_level,candidate.account_id,
+    candidate.breakout_score,candidate.relationship_score,candidate.patrol_score,candidate.status,now(),now()
   ).run();
   return candidate;
 }
@@ -165,11 +339,13 @@ export async function factoryP5Status(env){
   const cfg=config(env);
   let dbReady=true;
   try{ await env.DB.prepare("SELECT id FROM social_candidates LIMIT 1").first(); }catch{dbReady=false;}
-  const counts={candidates:0,pending_review:0,approved:0};
+  const counts={candidates:0,pending_review:0,approved:0,tracked_accounts:0,high_reach_accounts:0};
   if(dbReady){
     counts.candidates=Number((await env.DB.prepare("SELECT COUNT(*) AS n FROM social_candidates").first())?.n||0);
     counts.pending_review=Number((await env.DB.prepare("SELECT COUNT(*) AS n FROM social_reply_drafts WHERE status='pending_review'").first())?.n||0);
     counts.approved=Number((await env.DB.prepare("SELECT COUNT(*) AS n FROM social_reply_drafts WHERE status='approved'").first())?.n||0);
+    counts.tracked_accounts=Number((await env.DB.prepare("SELECT COUNT(*) AS n FROM social_accounts").first())?.n||0);
+    counts.high_reach_accounts=Number((await env.DB.prepare("SELECT COUNT(*) AS n FROM social_accounts WHERE reach_score>=60").first())?.n||0);
   }
   return {
     ...cfg,
@@ -177,7 +353,7 @@ export async function factoryP5Status(env){
     ready:cfg.enabled&&dbReady,
     counts,
     note:cfg.enabled
-      ? 'P5 Social Scout 已啟用；只產生與審核回覆草稿，不會自動送出。'
+      ? 'P5 v0.2 已啟用：High-Reach Radar、Relationship Score、Patrol Queue 可用；不會自動送出回覆。'
       : 'P5 已部署但保持關閉，不會掃描或送出社群互動。'
   };
 }
