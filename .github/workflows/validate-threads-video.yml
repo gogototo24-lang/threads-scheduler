@@ -1,0 +1,36 @@
+name: Validate Threads video publishing
+
+on:
+  pull_request:
+    paths:
+      - "src/worker.js"
+      - "src/video-publishing.mjs"
+      - "migrations/0011_threads_video.sql"
+      - "tests/video-publishing.test.mjs"
+      - ".github/workflows/validate-threads-video.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Syntax check
+        run: |
+          node --check src/worker.js
+          node --check src/ai-worker.js
+          node --check src/video-publishing.mjs
+          node --check tests/video-publishing.test.mjs
+      - name: Offline video publisher unit tests
+        run: node --test tests/video-publishing.test.mjs
+      - name: Install Cloudflare Wrangler
+        run: npm ci
+      - name: Build Worker without deploying
+        run: npx wrangler deploy --dry-run --outdir .wrangler-dry-run
