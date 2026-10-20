@@ -1,0 +1,35 @@
+name: Validate CatPaw Universe HQ
+
+on:
+  pull_request:
+    paths:
+      - "src/universe-hq.js"
+      - "src/ai-worker.js"
+      - "migrations/0012_universe_hq.sql"
+      - "tests/universe-hq.test.mjs"
+      - ".github/workflows/validate-universe-hq.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Check syntax
+        run: |
+          node --check src/universe-hq.js
+          node --check src/ai-worker.js
+          node --check tests/universe-hq.test.mjs
+      - name: Test protected HQ APIs and Mock safety
+        run: node --test tests/universe-hq.test.mjs
+      - name: Install Wrangler
+        run: npm ci
+      - name: Build only, never deploy in PR
+        run: npx wrangler deploy --dry-run --outdir .wrangler-dry-run
