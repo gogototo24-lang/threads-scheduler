@@ -88,6 +88,9 @@ test('CORS policy rejects foreign origins before admin key check',async()=>{
   const ok=await handleHqRequest(req('OPTIONS','/api/factory/hq/jobs'),env);
   assert.equal(ok.status,204);
   assert.equal(ok.headers.get('access-control-allow-origin'),ORIGIN);
+  const render=await handleHqRequest(req('OPTIONS','/api/factory/hq/jobs',null,null,'https://catpaw-universe-hq.onrender.com'),env);
+  assert.equal(render.status,204);
+  assert.equal(render.headers.get('access-control-allow-origin'),'https://catpaw-universe-hq.onrender.com');
 });
 
 test('private mutations reject missing admin key',async()=>{
