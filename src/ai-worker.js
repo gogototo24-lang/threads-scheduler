@@ -1,5 +1,6 @@
 const TZ = 'Asia/Taipei';
 import legacy from './worker.js';
+import { handleHqRequest } from './universe-hq.js';
 import { generateImage, startVideo, pollVideo, providers, searchTrends, generateDrafts } from './ai-engine.js';
 import { factoryP3Status, factoryP3Create, factoryP3Get, factoryP3List, factoryP3Retry, processFactoryP3 } from './factory-p3.js';
 import { factoryP4Status, factoryP4Create, factoryP4Get, factoryP4List, processFactoryP4 } from './factory-p4.js';
@@ -8,6 +9,7 @@ import { factoryP5Status, factoryP5Ingest, factoryP5BootstrapFromTrends, factory
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/api/factory/hq/')) return handleHqRequest(request, env);
     if (url.pathname === '/review' && request.method === 'GET') return reviewPage(request, env);
     if (url.pathname === '/api/factory/p5/status' && request.method === 'GET') return jsonCors(await factoryP5Status(env));
     if (url.pathname === '/api/factory/p5/accounts' && request.method === 'POST') return guarded(request, env, () => factoryP5AccountIngest(request, env));
