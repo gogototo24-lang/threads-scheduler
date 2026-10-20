@@ -34,7 +34,7 @@ function mockDb() {
         async run() {
           const a=this.args;
           if (sql.includes('INSERT OR IGNORE INTO factory_jobs')) {
-            const key=a[6];
+            const key=a[5];
             if(jobs.has(key))return {meta:{changes:0}};
             jobs.set(key,{id:a[0],pipeline_id:a[1],input_json:a[4],status:'awaiting_review'});
             return {meta:{changes:1}};
