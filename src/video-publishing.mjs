@@ -133,10 +133,14 @@ async function processOneVideo(env, post, token) {
     await nextPoll(env, post.id, decision === 'unknown' ? '未知的處理狀態：' + data.status : null);
     return 'waiting';
   }
-  if (decision === 'failed' || decision === 'already_published') {
-    await markFailed(env, post.id, decision === 'already_published'
-      ? '容器已顯示 PUBLISHED；請人工確認，避免重複發文'
-      : (data.error_message || '影片處理失敗：' + data.status));
+  if (decision === 'already_published') {
+    await env.DB.prepare(
+      "UPDATE posts SET status='publish_unknown',error=? WHERE id=? AND status='processing'"
+    ).bind('Threads 容器已顯示 PUBLISHED；請人工確認是否已發布，禁止重試', post.id).run();
+    return 'unknown';
+  }
+  if (decision === 'failed') {
+    await markFailed(env, post.id, data.error_message || '影片處理失敗：' + data.status);
     return 'failed';
   }
 
