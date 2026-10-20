@@ -1,3 +1,5 @@
+import { validateVideoFile, beginVideoPost, processVideoPosts } from './video-publishing.mjs';
+
 const GRAPH = 'https://graph.threads.net/v1.0';
 const OAUTH_HOST = 'https://graph.threads.net';
 const AUTH_URL = 'https://threads.net/oauth/authorize';
@@ -56,7 +58,7 @@ export default {
         return handleOAuthCallback(request, env);
       }
 
-      if (request.method === 'GET' && url.pathname.startsWith('/media/')) {
+      if (['GET', 'HEAD'].includes(request.method) && url.pathname.startsWith('/media/')) {
         return serveMedia(request, env);
       }
 
@@ -89,7 +91,7 @@ export default {
           try {
             const id = decodeURIComponent(publishMatch[1]);
             const result = await publishNow(env, id);
-            return json({ ok: true, threadId: result.threadId, permalink: result.permalink });
+            return json({ ok: true, ...result });
           } catch (error) {
             return json({ error: safeError(error) }, 500);
           }
@@ -293,28 +295,21 @@ async function createScheduledPost(requestOrForm, env, maybeReq) {
   const text = String(form.get('text') || '').trim();
   const rawTime = String(form.get('scheduledAtLocal') || form.get('scheduledAt') || '');
   const quick = String(form.get('quick') || '');
-  const file = form.get('image');
-
-  if (!text && !(file instanceof File && file.size > 0)) {
-    throw new Error('請輸入貼文文字或上傳圖片');
-  }
+  const image = form.get('image');
+  const video = form.get('video');
+  const hasImage = image instanceof File && image.size > 0;
+  const hasVideo = video instanceof File && video.size > 0;
+  if (hasImage && hasVideo) throw new Error('每篇限選一張圖片或一支影片');
+  if (!text && !hasImage && !hasVideo) throw new Error('請輸入貼文文字或上傳媒體');
 
   const scheduledAt = resolveScheduledAt(rawTime, quick, Date.now());
-  const media = await storeImageIfAny(file, env, request);
-
+  const media = hasVideo ? await storeVideoIfAny(video, env, request)
+    : await storeImageIfAny(image, env, request);
+  const mediaType = hasVideo ? 'VIDEO' : media ? 'IMAGE' : 'TEXT';
   const id = crypto.randomUUID();
-  await env.DB.prepare(`
-    INSERT INTO posts (id, text, media_type, media_key, media_url, scheduled_at, status)
-    VALUES (?, ?, ?, ?, ?, ?, 'scheduled')
-  `).bind(
-    id,
-    text,
-    media ? 'IMAGE' : 'TEXT',
-    media ? media.key : null,
-    media ? media.url : null,
-    scheduledAt.toISOString()
-  ).run();
-
+  await env.DB.prepare(
+    "INSERT INTO posts (id,text,media_type,media_key,media_url,scheduled_at,status) VALUES (?,?,?,?,?,?,'scheduled')"
+  ).bind(id, text, mediaType, media?.key || null, media?.url || null, scheduledAt.toISOString()).run();
   return id;
 }
 
@@ -322,48 +317,49 @@ async function updateScheduledPost(requestOrForm, env, explicitId) {
   const form = requestOrForm instanceof FormData ? requestOrForm : await requestOrForm.formData();
   const id = explicitId || String(form.get('id') || '');
   if (!id) throw new Error('缺少排程 ID');
-
   const existing = await env.DB.prepare('SELECT * FROM posts WHERE id = ?').bind(id).first();
   if (!existing) throw new Error('找不到排程');
-  if (existing.status === 'published' || existing.status === 'publishing') {
-    throw new Error('已發布或發布中的排程不可編輯');
+  if (!['scheduled', 'failed'].includes(existing.status)) {
+    throw new Error('此排程正在處理、狀態不明或已發布，不可直接編輯');
   }
 
   const text = String(form.get('text') || '').trim();
-  const file = form.get('image');
-  const removeImage = String(form.get('removeImage') || '') === '1';
+  const image = form.get('image');
+  const video = form.get('video');
+  const hasImage = image instanceof File && image.size > 0;
+  const hasVideo = video instanceof File && video.size > 0;
+  const removeMedia = String(form.get('removeMedia') || form.get('removeImage') || '') === '1';
   const rawTime = String(form.get('scheduledAtLocal') || form.get('scheduledAt') || '');
   const quick = String(form.get('quick') || '');
-
-  if (!text && !(file instanceof File && file.size > 0) && !removeImage && !existing.media_url) {
-    throw new Error('請輸入貼文文字或保留圖片');
+  if (hasImage && hasVideo) throw new Error('每篇限選一張圖片或一支影片');
+  if (!text && !hasImage && !hasVideo && (removeMedia || !existing.media_url)) {
+    throw new Error('請輸入貼文文字或保留媒體');
   }
 
   let mediaType = existing.media_type || 'TEXT';
   let mediaKey = existing.media_key;
   let mediaUrl = existing.media_url;
-
-  if (file instanceof File && file.size > 0) {
-    const image = await storeImageIfAny(file, env, requestOrForm instanceof FormData ? null : requestOrForm);
-    if (existing.media_key && env.MEDIA) await env.MEDIA.delete(existing.media_key).catch(() => {});
-    mediaType = 'IMAGE';
-    mediaKey = image ? image.key : null;
-    mediaUrl = image ? image.url : null;
-  } else if (removeImage) {
-    if (existing.media_key && env.MEDIA) await env.MEDIA.delete(existing.media_key).catch(() => {});
+  if (hasImage || hasVideo) {
+    const media = hasVideo
+      ? await storeVideoIfAny(video, env, requestOrForm instanceof FormData ? null : requestOrForm)
+      : await storeImageIfAny(image, env, requestOrForm instanceof FormData ? null : requestOrForm);
+    mediaType = hasVideo ? 'VIDEO' : 'IMAGE';
+    mediaKey = media.key;
+    mediaUrl = media.url;
+  } else if (removeMedia) {
     mediaType = 'TEXT';
     mediaKey = null;
     mediaUrl = null;
   }
 
   const scheduledAt = resolveScheduledAt(rawTime, quick, Date.now(), existing.scheduled_at);
-
-  await env.DB.prepare(`
-    UPDATE posts
-    SET text = ?, media_type = ?, media_key = ?, media_url = ?, scheduled_at = ?, status = 'scheduled', error = NULL
-    WHERE id = ?
-  `).bind(text || '', mediaType, mediaKey, mediaUrl, scheduledAt.toISOString(), id).run();
-
+  await env.DB.prepare(
+    "UPDATE posts SET text=?,media_type=?,media_key=?,media_url=?,scheduled_at=?,status='scheduled',error=NULL," +
+    "video_container_id=NULL,video_started_at=NULL,video_next_check_at=NULL,video_publish_requested_at=NULL WHERE id=?"
+  ).bind(text, mediaType, mediaKey, mediaUrl, scheduledAt.toISOString(), id).run();
+  if (existing.media_key && existing.media_key !== mediaKey && env.MEDIA) {
+    await env.MEDIA.delete(existing.media_key).catch(() => {});
+  }
   return id;
 }
 
@@ -386,17 +382,29 @@ async function deleteScheduledPostById(env, id) {
 
 async function serveMedia(request, env) {
   if (!env.MEDIA) return new Response('Media binding unavailable', { status: 503 });
-
-  const path = decodeURIComponent(request.url.slice(request.url.indexOf('/media/')));
-  const key = path.replace(/^\/media\//, '');
-  const object = await env.MEDIA.get(key);
-  if (!object) return new Response('Not found', { status: 404 });
-
+  const url = new URL(request.url);
+  const key = decodeURIComponent(url.pathname.slice('/media/'.length));
+  if (!key) return new Response('Not found', { status: 404 });
+  const isHead = request.method === 'HEAD';
+  const object = isHead
+    ? await env.MEDIA.head(key)
+    : await env.MEDIA.get(key, { range: request.headers });
+  if (!object) return new Response(null, { status: 404 });
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set('etag', object.httpEtag);
+  headers.set('accept-ranges', 'bytes');
   headers.set('cache-control', 'public, max-age=31536000, immutable');
-  return new Response(object.body, { headers });
+  const ranged = !isHead && object.range && typeof object.range.offset === 'number';
+  if (ranged) {
+    headers.set('content-range', 'bytes ' + object.range.offset + '-' +
+      (object.range.offset + object.range.length - 1) + '/' + object.size);
+    headers.set('content-length', String(object.range.length));
+  } else {
+    headers.set('content-length', String(object.size));
+  }
+  if (!isHead && !('body' in object)) return new Response(null, { status: 412, headers });
+  return new Response(isHead ? null : object.body, { status: ranged ? 206 : 200, headers });
 }
 
 async function apiListPosts(env) {
@@ -409,9 +417,10 @@ async function publishNow(env, id) {
   if (!post) throw new Error('找不到排程');
   if (post.status === 'published') throw new Error('此貼文已發布');
 
+  if (post.media_type === 'VIDEO') return beginVideoPost(env, post);
   const threadId = await publishPost(env, post);
   const permalink = await getPermalinkFromPost(env, threadId);
-  return { threadId, permalink };
+  return { status: 'published', threadId, permalink };
 }
 
 async function runScheduler(env) {
@@ -426,6 +435,10 @@ async function runScheduler(env) {
 
   for (const post of rows) {
     try {
+      if (post.media_type === 'VIDEO') {
+        await beginVideoPost(env, post);
+        continue;
+      }
       const threadId = await publishPost(env, post);
       const permalink = await getPermalinkFromPost(env, threadId);
       await env.DB.prepare(`UPDATE posts SET permalink = ? WHERE id = ?`).bind(permalink, post.id).run();
@@ -446,6 +459,7 @@ async function runScheduler(env) {
       }
     }
   }
+  await processVideoPosts(env);
 }
 
 async function publishPost(env, post) {
@@ -659,6 +673,24 @@ function getTaipeiParts(date) {
   };
 }
 
+async function storeVideoIfAny(file, env, request) {
+  if (!(file instanceof File) || !file.size) return null;
+  validateVideoFile(file);
+  if (!env.MEDIA) throw new Error('尚未設定 R2 MEDIA binding');
+  const prefix = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  if (prefix.length < 12 || String.fromCharCode(...prefix.slice(4, 8)) !== 'ftyp') {
+    throw new Error('檔案不是有效的 MP4 容器，請重新轉檔');
+  }
+  const key = 'uploads/' + crypto.randomUUID() + '.mp4';
+  await env.MEDIA.put(key, file.stream(), {
+    httpMetadata: {
+      contentType: 'video/mp4',
+      cacheControl: 'public, max-age=31536000, immutable'
+    }
+  });
+  return { key, url: getBaseUrl(request, env) + '/media/' + encodeURIComponent(key) };
+}
+
 async function storeImageIfAny(file, env, request) {
   if (!(file instanceof File) || !file.size) return null;
   if (!env.MEDIA) throw new Error('尚未設定 R2 MEDIA binding');
@@ -776,7 +808,13 @@ function renderApp({ appName, loggedIn, username, posts, requestUrl, statusMessa
 
   const formAction = editingPost ? '/edit' : '/schedule';
   const formHidden = editingPost ? `<input type="hidden" name="id" value="${escapeHtml(editingPost.id)}" />` : '';
-  const imagePreview = editingPost && editingPost.media_url ? `<div class="preview-wrap"><img class="preview" src="${escapeHtml(editingPost.media_url)}" alt="目前圖片" /><label class="checkbox"><input type="checkbox" name="removeImage" value="1" /> 移除目前圖片</label></div>` : '';
+  const mediaPreview = editingPost && editingPost.media_url
+    ? '<div class="preview-wrap">' +
+      (editingPost.media_type === 'VIDEO'
+        ? '<video class="preview" src="' + escapeHtml(editingPost.media_url) + '" controls preload="metadata"></video>'
+        : '<img class="preview" src="' + escapeHtml(editingPost.media_url) + '" alt="目前圖片" />') +
+      '<label class="checkbox"><input type="checkbox" name="removeMedia" value="1" /> 移除目前媒體</label></div>'
+    : '';
 
   const form = `
     <section class="card">
@@ -788,7 +826,9 @@ function renderApp({ appName, loggedIn, username, posts, requestUrl, statusMessa
 
         <label>單張圖片（JPG / PNG，最多 10 MB）</label>
         <input type="file" name="image" accept="image/jpeg,image/png" />
-        ${imagePreview}
+        <label>或單支影片（H.264 MP4，最多 25 MB）</label>
+        <input type="file" name="video" accept="video/mp4" />
+        ${mediaPreview}
 
         <label>發佈時間（台灣時間 Asia/Taipei）</label>
         <input type="datetime-local" name="scheduledAtLocal" />
@@ -845,14 +885,18 @@ function renderApp({ appName, loggedIn, username, posts, requestUrl, statusMessa
 
 function renderPostCard(post) {
   const status = escapeHtml(post.status || 'scheduled');
-  const text = escapeHtml(post.text || '(只有圖片)');
-  const image = post.media_url ? `<img class="preview" src="${escapeHtml(post.media_url)}" alt="排程圖片" loading="lazy" />` : '';
+  const text = escapeHtml(post.text || '(無文字)');
+  const image = !post.media_url ? '' : post.media_type === 'VIDEO'
+    ? '<video class="preview" src="' + escapeHtml(post.media_url) + '" controls preload="metadata"></video>'
+    : '<img class="preview" src="' + escapeHtml(post.media_url) + '" alt="排程圖片" loading="lazy" />';
   const scheduleTime = escapeHtml(fTime(post.scheduled_at));
   const publishTime = post.published_at ? escapeHtml(fTime(post.published_at)) : '—';
   const attempts = escapeHtml(post.attempts || 0);
   const error = post.error ? `<div class="msg err">${escapeHtml(post.error)}</div>` : '';
   const permalinkLink = post.permalink ? `<a class="primary btnlink" href="${escapeHtml(post.permalink)}" target="_blank" rel="noopener">查看 Threads 貼文</a>` : '';
   const canEdit = ['scheduled', 'failed'].includes(post.status);
+  const processingHint = post.media_type === 'VIDEO' && ['preparing', 'processing', 'publishing', 'publish_unknown'].includes(post.status)
+    ? '<div class="msg">影片處理中或發布結果待核對；請勿重複提交。</div>' : '';
   const editLink = canEdit ? `<a class="secondary btnlink" href="/?edit=${encodeURIComponent(post.id)}">編輯</a>` : '';
   const deleteForm = canEdit ? `
     <form method="post" action="/delete" class="inline-form">
@@ -879,6 +923,7 @@ function renderPostCard(post) {
         <span>嘗試：${attempts}</span>
       </div>
       ${error}
+      ${processingHint}
       <div class="action-row">
         ${permalinkLink}
         ${editLink}
