@@ -4,7 +4,7 @@
 
 export const HQ_PIPELINES = Object.freeze(['A','B','C','D']);
 export const HQ_ROLES = Object.freeze(['HQ','A','B','C','D','W']);
-const ORIGIN = 'https://gogototo24-lang.github.io';
+const ORIGINS = new Set(['https://gogototo24-lang.github.io', 'https://catpaw-universe-hq.onrender.com']);
 const SOURCE = 'catpaw-hq-v1';
 
 export function validateMockJob(raw) {
@@ -37,7 +37,7 @@ export function validateRoleUpdate(role, data) {
 
 function allowedOrigin(req) {
   const origin = req.headers.get('origin') || '';
-  return origin === ORIGIN || origin === new URL(req.url).origin ? origin : '';
+  return ORIGINS.has(origin) || origin === new URL(req.url).origin ? origin : '';
 }
 
 function headers(req, json = true) {
