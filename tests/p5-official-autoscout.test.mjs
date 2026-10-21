@@ -23,7 +23,7 @@ test('official feed allows fresh performing arts, rejects politics, old news and
  assert.equal(out[0].source_url,good.url);
 });
 test('official source text is attributed, original and short',()=>{
- const text=buildOriginalPost(good);
+ const text=buildOriginalPost({...good,source_url:good.url});
  assert.match(text,/文化部/);
  assert.ok(text.includes(good.url));
  assert.ok(text.includes('喵台灣'));
