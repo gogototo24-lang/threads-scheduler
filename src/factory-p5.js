@@ -508,7 +508,15 @@ async function threadsPublishAction(env,action){
   })}`,{method:'POST'});
   const pub=await published.json().catch(()=>({}));
   if(!published.ok||!pub.id) throw new Error(pub?.error?.message||'Threads 發布失敗');
-  return {thread_id:String(pub.id),permalink:null};
+  const pubId=String(pub.id);
+  let permalink=null;
+  try{
+    const res=await fetch(graph+'/'+encodeURIComponent(pubId)+'?'+
+      new URLSearchParams({fields:'permalink',access_token:token}));
+    const info=await res.json().catch(()=>({}));
+    if(res.ok&&typeof info.permalink==='string'&&info.permalink.startsWith('https://')) permalink=info.permalink;
+  }catch{ /* Publishing succeeded; permalink retrieval is best effort. */ }
+  return {thread_id:pubId,permalink};
 }
 
 async function canSendNow(env,candidate,cfg){
@@ -601,22 +609,36 @@ export async function factoryP5ActionQueue(env,limit=50){
   return {actions:rows};
 }
 
-async function processPublicActions(env,cfg){
-  if(!cfg.auto_send) return {sent:0,failed:0};
-  const due=(await env.DB.prepare(
-    "SELECT * FROM social_actions WHERE status='queued' AND (scheduled_at IS NULL OR scheduled_at<=?) ORDER BY created_at LIMIT ?"
-  ).bind(now(),cfg.hourly_action_limit).all()).results||[];
-  let sent=0,failed=0;
+export async function processPublicActions(env,cfg,onlyActionId=null){
+  if(!cfg.auto_send) return {sent:0,failed:0,blocked_auth:0,unknown:0,rate_limited:0};
+  const sentHour=Number((await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM social_actions WHERE status='sent' AND sent_at>=?"
+  ).bind(new Date(Date.now()-3600000).toISOString()).first())?.n||0);
+  if(sentHour>=cfg.hourly_action_limit) return {sent:0,failed:0,blocked_auth:0,unknown:0,rate_limited:1};
+  const cap=Math.min(cfg.hourly_action_limit-sentHour, onlyActionId?1:cfg.hourly_action_limit);
+  const q=onlyActionId
+    ? env.DB.prepare("SELECT * FROM social_actions WHERE id=? AND status='queued' AND scheduled_at<=? LIMIT 1")
+       .bind(onlyActionId,now())
+    : env.DB.prepare("SELECT * FROM social_actions WHERE status='queued' AND (scheduled_at IS NULL OR scheduled_at<=?) ORDER BY created_at LIMIT ?")
+       .bind(now(),cap);
+  const due=(await q.all()).results||[];
+  let sent=0,failed=0,blocked_auth=0,unknown=0;
   for(const action of due){
-    if(action.risk_level==='high'){
-      await env.DB.prepare("UPDATE social_actions SET status='blocked',error=?,updated_at=? WHERE id=?")
-        .bind('high_risk_requires_human_review',now(),action.id).run();
+    if(action.risk_level!=='low' || (!['reply','quote','repost','original_post'].includes(action.action_type))){
+      await env.DB.prepare("UPDATE social_actions SET status='blocked',error=?,updated_at=? WHERE id=? AND status='queued'")
+        .bind('risk_or_action_type_requires_review',now(),action.id).run();
       continue;
     }
+    // Claim the job *before* any outbound call. Overlapping cron/fast-lane runs
+    // cannot publish the same action twice, even if the response is lost.
+    const claim=await env.DB.prepare(
+      "UPDATE social_actions SET status='sending',error=NULL,updated_at=? WHERE id=? AND status='queued'"
+    ).bind(now(),action.id).run();
+    if(!claim.meta?.changes)continue;
     try{
       const out=await threadsPublishAction(env,action);
       await env.DB.prepare(
-        "UPDATE social_actions SET status='sent',external_thread_id=?,permalink=?,sent_at=?,error=NULL,updated_at=? WHERE id=?"
+        "UPDATE social_actions SET status='sent',external_thread_id=?,permalink=?,sent_at=?,error=NULL,updated_at=? WHERE id=? AND status='sending'"
       ).bind(out.thread_id,out.permalink,now(),now(),action.id).run();
       if(action.candidate_id){
         await env.DB.prepare("UPDATE social_candidates SET status='sent',updated_at=? WHERE id=?")
@@ -624,12 +646,22 @@ async function processPublicActions(env,cfg){
       }
       sent++;
     }catch(e){
-      await env.DB.prepare("UPDATE social_actions SET status='failed',error=?,updated_at=? WHERE id=?")
-        .bind(String(e).slice(0,700),now(),action.id).run();
+      // OAuth missing is deterministic: do not throw away a timely queued
+      // news story. It stays visible for reauthorization and human review.
+      const reason=String(e?.message||e||'發布失敗').slice(0,650);
+      const notConnected=reason.includes('尚未連接 Threads 帳號');
+      const status=notConnected?'blocked_auth':'publish_unknown';
+      await env.DB.prepare(
+        "UPDATE social_actions SET status=?,error=?,updated_at=? WHERE id=? AND status='sending'"
+      ).bind(status,notConnected
+        ? 'Threads OAuth 未配置，請管理員重新授權；禁止假稱已發布'
+        : '發布結果不明，請先查 Threads 帳號是否已發文，禁止自動重試：'+reason,
+        now(),action.id).run();
+      if(notConnected)blocked_auth++;else unknown++;
       failed++;
     }
   }
-  return {sent,failed};
+  return {sent,failed,blocked_auth,unknown,rate_limited:0};
 }
 
 export async function factoryP5Status(env){
