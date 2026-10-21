@@ -29,6 +29,10 @@ export function validateFastLaneSubmission(body, currentMs = Date.now()) {
   }
   const evidence = Array.isArray(body.verification_urls) ? body.verification_urls : [];
   if (vMethod === 'independent' && evidence.length < 2) throw new Error('新聞須有兩個獨立核實來源');
+  if (vMethod === 'independent') {
+    const hosts = evidence.map(u => { try { return new URL(String(u)).hostname.toLowerCase(); } catch { return ''; } });
+    if (new Set(hosts).size < 2) throw new Error('雙來源核實需使用不同來源網站');
+  }
   if (vMethod === 'official' && evidence.length < 1) throw new Error('官方核實需提供官方公告 URL');
   for (const value of evidence.slice(0,6)) {
     let u; try { u = new URL(String(value)); } catch { throw new Error('核實來源網址格式錯誤'); }
