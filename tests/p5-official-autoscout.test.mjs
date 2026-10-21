@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {FEED_URL,parseOfficialFeed,buildOriginalPost,runOfficialScout} from '../src/p5-official-autoscout.js';
+import {FEED_URL,parseOfficialFeed,buildOriginalPost,runOfficialScout,publicOfficialScoutStatus} from '../src/p5-official-autoscout.js';
 
 const NOW=Date.parse('2026-10-21T06:00:00Z');
 function rss(articles){
@@ -129,4 +129,21 @@ test('when RSS unavailable, scout records error and posts nothing',async()=>{
  assert.equal(result.status,'error');
  assert.equal(result.published,0);
  assert.equal(store.runs.size,1);
+});
+
+test('public scout status shows only safe counters and public post URL, no secrets',async()=>{
+ const env={
+  FACTORY_P5_OFFICIAL_SCOUT_ENABLED:'true',
+  ADMIN_KEY:'NEVER_EXPOSE_THIS',P5_SCOUT_KEY:'NEVER_EXPOSE_THIS',
+  DB:{prepare(sql){return {async first(){
+   assert.ok(sql.includes('SELECT started_at'));
+   return {started_at:'2026-10-21T06:00:00Z',status:'no_fresh',scanned:5,eligible:0,
+    submitted:0,published:0,skipped:0,last_permalink:null};
+  }}}}
+ };
+ const result=await publicOfficialScoutStatus(env);
+ assert.equal(result.enabled,true);
+ assert.equal(result.latest.status,'no_fresh');
+ assert.equal(JSON.stringify(result).includes('NEVER_EXPOSE_THIS'),false);
+ assert.equal(result.no_private_credentials,true);
 });
