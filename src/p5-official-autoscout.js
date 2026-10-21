@@ -132,6 +132,13 @@ export async function publicOfficialScoutStatus(env) {
      submitted:latest.submitted,published:latest.published,skipped:latest.skipped,
      permalink:latest.last_permalink||null
    }:null,
+   diagnostic_code:latest?.status==='error' ? (
+     /^RSS 網路錯誤 HTTP (\d{3})/.test(String(latest.detail||''))
+       ? 'RSS_HTTP_'+String(latest.detail).match(/^RSS 網路錯誤 HTTP (\d{3})/)[1]
+       : /RSS 內容無效/.test(String(latest.detail||'')) ? 'RSS_FORMAT_INVALID'
+       : /fetch|network|Failed/i.test(String(latest.detail||'')) ? 'RSS_NETWORK_FAILURE'
+       : 'OFFICIAL_SOURCE_ERROR'
+   ) : null,
    no_new_metricool_posts:true,
    no_private_credentials:true
  };
