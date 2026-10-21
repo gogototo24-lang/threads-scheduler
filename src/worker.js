@@ -868,6 +868,7 @@ function renderApp({ appName, loggedIn, username, posts, requestUrl, statusMessa
           </div>
           <div class="action-row">
             <a class="primary btnlink" href="/connect">${username ? '重新連接 Threads' : '連接 Threads'}</a>
+            <a class="secondary btnlink" href="/p5/authorize">🔐 P5 海巡授權中心</a>
           </div>
         </section>
 
