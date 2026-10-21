@@ -42,7 +42,7 @@ export function parseOfficialFeed(xml,now=Date.now()){
   if(seen.has(url.href))continue;seen.add(url.href);
   result.push({title,source_url:url.href,published_at:new Date(time).toISOString()});
  }
- return result;
+ return result.sort((a,b)=>Date.parse(b.published_at)-Date.parse(a.published_at));
 }
 export function buildOriginalPost(item){
  const title=item.title.slice(0,125);
@@ -74,7 +74,7 @@ export async function runOfficialScout(env,now=Date.now(),fetcher=fetch){
   const entries=parseOfficialFeed(xml,now);
   out.eligible=entries.length;
   // One official article maximum per 10-minute run, never a bulk posting.
-  for(const item of entries.slice(0,1)){
+  for(const item of entries.slice(0,10)){
    if(await env.DB.prepare('SELECT id FROM social_cross_platform_items WHERE source_url=? LIMIT 1')
         .bind(item.source_url).first()){out.skipped++;continue;}
    let article;
@@ -97,7 +97,9 @@ export async function runOfficialScout(env,now=Date.now(),fetcher=fetch){
    out.action=result.action_id||null;out.permalink=result.permalink||null;
    out.status=result.published?'published':(result.status||'queued');
    out.detail=result.error||('文化部官方來源：'+item.source_url);
+   break; // Hard limit: one processed original per scan.
   }
+  if(out.status==='no_fresh'&&out.skipped>0)out.status='already_seen_or_unavailable';
  }catch(e){out.status='error';out.detail=String(e?.message||e).slice(0,400);}
  await writeRun(env,slot,out);
  return {enabled:true,slot,...out};
@@ -111,5 +113,26 @@ export async function officialScoutStatus(env){
   source:FEED_URL,frequency:'10-minute cadence on Cloudflare Cron',
   coverage:'官方文化部 RSS；不代表完整台灣社群全網',
   latest:latest||null,last_24h:statuses.results||[],metricool_new_posts:false
+ };
+}
+
+export async function publicOfficialScoutStatus(env) {
+ const latest=await env.DB.prepare(
+  'SELECT started_at,finished_at,status,scanned,eligible,submitted,published,skipped,last_permalink FROM p5_official_scout_runs ORDER BY started_at DESC LIMIT 1'
+ ).first();
+ return {
+   system:'CatPaw P5 Official Scout',
+   enabled:String(env.FACTORY_P5_OFFICIAL_SCOUT_ENABLED||'').toLowerCase()==='true',
+   source_name:'文化部官方文化新聞',
+   coverage:'文化部官方 RSS，非全網海巡',
+   check_interval_minutes:10,
+   latest:latest?{
+     started_at:latest.started_at,finished_at:latest.finished_at,
+     status:latest.status,scanned:latest.scanned,eligible:latest.eligible,
+     submitted:latest.submitted,published:latest.published,skipped:latest.skipped,
+     permalink:latest.last_permalink||null
+   }:null,
+   no_new_metricool_posts:true,
+   no_private_credentials:true
  };
 }

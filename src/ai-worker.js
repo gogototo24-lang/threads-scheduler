@@ -3,7 +3,7 @@ import legacy from './worker.js';
 import { handleHqRequest } from './universe-hq.js';
 import { p5AuthPage,p5AuthStatus,issueScopedScoutKey,isScopedScoutKey } from './p5-auth.js';
 import { fastLaneHealth, fastLaneSubmit, fastLaneActionStatus } from './p5-fastlane.js';
-import { runOfficialScout, officialScoutStatus } from './p5-official-autoscout.js';
+import { runOfficialScout, officialScoutStatus, publicOfficialScoutStatus } from './p5-official-autoscout.js';
 import { generateImage, startVideo, pollVideo, providers, searchTrends, generateDrafts } from './ai-engine.js';
 import { factoryP3Status, factoryP3Create, factoryP3Get, factoryP3List, factoryP3Retry, processFactoryP3 } from './factory-p3.js';
 import { factoryP4Status, factoryP4Create, factoryP4Get, factoryP4List, processFactoryP4 } from './factory-p4.js';
@@ -25,6 +25,8 @@ export default {
     if (url.pathname === '/api/factory/p5/status' && request.method === 'GET') return jsonCors(await factoryP5Status(env));
     if (url.pathname === '/api/factory/p5/official-scout/status' && request.method === 'GET')
       return guarded(request,env,()=>officialScoutStatus(env));
+    if (url.pathname === '/api/factory/p5/official-scout/public' && request.method === 'GET')
+      return jsonCors(await publicOfficialScoutStatus(env));
     // Authenticated, least-privilege fastlane: admin/scout secret only, no public bypass.
     if (url.pathname === '/api/factory/p5/fastlane/health' && request.method === 'GET')
       return scoutGuarded(request,env,()=>fastLaneHealth(env));
