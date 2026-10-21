@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {validateFastLaneSubmission,fastLaneSubmit,fastLaneHealth,fastLaneActionStatus} from '../src/p5-fastlane.js';
 import {processPublicActions} from '../src/factory-p5.js';
+import aiWorker from '../src/ai-worker.js';
 
 const source='https://www.example.com/events/taoyuan';
 function payload(timestamp=Date.now()) {
@@ -25,6 +26,7 @@ test('nonpolitical evidence requirements and 2-hour freshness',()=>{
   assert.throws(()=>validateFastLaneSubmission({...payload(now),source_url:'http://example.com'},now),/HTTPS/);
   assert.throws(()=>validateFastLaneSubmission({...payload(now),verification_urls:[]},now),/官方/);
   assert.throws(()=>validateFastLaneSubmission({...payload(now),verification_method:'independent',verification_urls:['https://one.example.com']},now),/兩個/);
+  assert.throws(()=>validateFastLaneSubmission({...payload(now),verification_method:'independent',verification_urls:['https://same.example/a','https://same.example/b']},now),/不同來源/);
   assert.throws(()=>validateFastLaneSubmission({...payload(now),contains_unlicensed_media:true},now),/人工/);
   assert.throws(()=>validateFastLaneSubmission({...payload(now),publish:true,text:'不含來源的貼文'},now),/原創/);
 });
@@ -139,4 +141,20 @@ test('after uncertain external response, publish_unknown prevents automatic dupl
     await processPublicActions(x.env,{auto_send:true,hourly_action_limit:5});
     assert.equal(publishCalls,1);
   }finally{globalThis.fetch=prev}
+});
+
+test('fastlane routes reject absent ADMIN_KEY and absent P5_SCOUT_KEY with HTTP 401',async()=>{
+  const env=fastDb().env;
+  const unauthorized=await aiWorker.fetch(new Request(
+    'https://threads-scheduler.gogototo24.workers.dev/api/factory/p5/fastlane/health'
+  ),env,{});
+  assert.equal(unauthorized.status,401);
+  const scoped=await aiWorker.fetch(new Request(
+    'https://threads-scheduler.gogototo24.workers.dev/api/factory/p5/fastlane/health',
+    {headers:{'x-p5-scout-key':'scout configured'}}
+  ),env,{});
+  assert.equal(scoped.status,200);
+  const json=await scoped.json();
+  assert.equal(json.threads_token_stored,true);
+  assert.equal(json.threads_token_validated_live,false);
 });
