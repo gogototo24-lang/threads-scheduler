@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {FEED_URL,FEED_SOURCES,parseOfficialFeed,buildOriginalPost,runOfficialScout,publicOfficialScoutStatus} from '../src/p5-official-autoscout.js';
 
-const NOW=Date.parse('2026-10-21T06:00:00Z');
+const NOW=Date.now();
 function rss(articles){
  return '<?xml version="1.0"?><rss version="2.0"><channel>'+
  articles.map(x=>'<item><title><![CDATA['+x.title+']]></title><link>'+
@@ -15,7 +15,7 @@ test('official feed allows fresh performing arts, rejects politics, old news and
   good,
   {...good,title:'選舉政治文化補助活動',url:'https://www.taiwan.net.tw/m1.aspx?sNo=0047778'},
   {...good,title:'全新展覽資訊',url:'https://www.evil.example.com/m1.aspx?sNo=0047779'},
-  {...good,title:'博物館開幕消息',url:'https://www.taiwan.net.tw/m1.aspx?sNo=0047780',time:NOW-7200000}
+  {...good,title:'博物館開幕消息',url:'https://www.taiwan.net.tw/m1.aspx?sNo=0047780',time:NOW-24*3600000}
  ]);
  const out=parseOfficialFeed(list,NOW);
  assert.equal(out.length,1);
@@ -107,7 +107,7 @@ test('native cron uses official source, creates one Threads publication, and nev
  };
  try{
   const first=await runOfficialScout(env,NOW,officialFetch);
-  assert.equal(first.status,'published');
+  assert.equal(first.status,'published', JSON.stringify(first));
   assert.equal(first.published,1);
   assert.equal(first.submitted,1);
   assert.equal(first.permalink,'https://www.threads.com/@catpaw/post/123');
