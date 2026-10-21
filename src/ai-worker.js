@@ -1,6 +1,7 @@
 const TZ = 'Asia/Taipei';
 import legacy from './worker.js';
 import { handleHqRequest } from './universe-hq.js';
+import { p5AuthPage,p5AuthStatus,issueScopedScoutKey,isScopedScoutKey } from './p5-auth.js';
 import { fastLaneHealth, fastLaneSubmit, fastLaneActionStatus } from './p5-fastlane.js';
 import { generateImage, startVideo, pollVideo, providers, searchTrends, generateDrafts } from './ai-engine.js';
 import { factoryP3Status, factoryP3Create, factoryP3Get, factoryP3List, factoryP3Retry, processFactoryP3 } from './factory-p3.js';
@@ -11,6 +12,14 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname.startsWith('/api/factory/hq/')) return handleHqRequest(request, env);
+    if (url.pathname === '/p5/authorize' && request.method === 'GET') {
+      return await isAdmin(request,env) ? p5AuthPage() :
+        new Response(null,{status:302,headers:{location:'/'}});
+    }
+    if (url.pathname === '/api/factory/p5/auth/status' && request.method === 'GET')
+      return guarded(request,env,()=>p5AuthStatus(env));
+    if (url.pathname === '/api/factory/p5/auth/issue' && request.method === 'POST')
+      return guarded(request,env,()=>issueScopedScoutKey(request,env));
     if (url.pathname === '/review' && request.method === 'GET') return reviewPage(request, env);
     if (url.pathname === '/api/factory/p5/status' && request.method === 'GET') return jsonCors(await factoryP5Status(env));
     // Authenticated, least-privilege fastlane: admin/scout secret only, no public bypass.
@@ -82,10 +91,15 @@ async function guarded(request, env, fn) {
   try { return json(await fn()); } catch (e) { return json({ error: safeError(e) }, 400); }
 }
 async function isScout(request, env) {
-  const configured = String(env.P5_SCOUT_KEY || '').trim();
-  if (!configured) return false;
-  const supplied = request.headers.get('x-p5-scout-key') || '';
-  return supplied === configured;
+  const supplied=String(request.headers.get('x-p5-scout-key')||'');
+  if(!supplied)return false;
+  const configured=String(env.P5_SCOUT_KEY||'').trim();
+  if(configured && supplied.length===configured.length){
+    let difference=0;
+    for(let i=0;i<supplied.length;i++)difference|=supplied.charCodeAt(i)^configured.charCodeAt(i);
+    if(difference===0)return true;
+  }
+  return isScopedScoutKey(request,env);
 }
 async function scoutGuarded(request, env, fn) {
   // Full admins may always operate P5; external scouts only get the narrow write-only scope.
