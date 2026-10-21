@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {FEED_URL,parseOfficialFeed,buildOriginalPost,runOfficialScout,publicOfficialScoutStatus} from '../src/p5-official-autoscout.js';
+import {FEED_URL,FEED_SOURCES,parseOfficialFeed,buildOriginalPost,runOfficialScout,publicOfficialScoutStatus} from '../src/p5-official-autoscout.js';
 
 const NOW=Date.parse('2026-10-21T06:00:00Z');
 function rss(articles){
@@ -9,13 +9,13 @@ function rss(articles){
  x.url.replaceAll('&','&amp;')+'</link><pubDate>'+new Date(x.time).toUTCString()+
  '</pubDate></item>').join('')+'</channel></rss>';
 }
-const good={title:'戲曲中心公布布袋戲新展覽',url:'https://www.moc.gov.tw/News_Content.aspx?n=105&s=123',time:NOW-60000};
+const good={title:'桃園夜市全新美食文化活動登場',url:'https://www.taiwan.net.tw/m1.aspx?sNo=0047777',time:NOW-60000};
 test('official feed allows fresh performing arts, rejects politics, old news and unofficial links',()=>{
  const list=rss([
   good,
-  {...good,title:'選舉政治文化補助活動',url:'https://www.moc.gov.tw/News_Content.aspx?s=124'},
-  {...good,title:'全新展覽資訊',url:'https://www.evil.example.com/News_Content.aspx?s=124'},
-  {...good,title:'博物館開幕消息',url:'https://www.moc.gov.tw/News_Content.aspx?s=125',time:NOW-7200000}
+  {...good,title:'選舉政治文化補助活動',url:'https://www.taiwan.net.tw/m1.aspx?sNo=0047778'},
+  {...good,title:'全新展覽資訊',url:'https://www.evil.example.com/m1.aspx?sNo=0047779'},
+  {...good,title:'博物館開幕消息',url:'https://www.taiwan.net.tw/m1.aspx?sNo=0047780',time:NOW-7200000}
  ]);
  const out=parseOfficialFeed(list,NOW);
  assert.equal(out.length,1);
@@ -24,7 +24,7 @@ test('official feed allows fresh performing arts, rejects politics, old news and
 });
 test('official source text is attributed, original and short',()=>{
  const text=buildOriginalPost({...good,source_url:good.url});
- assert.match(text,/文化部/);
+ assert.match(text,/交通部觀光署/);
  assert.ok(text.includes(good.url));
  assert.ok(text.includes('喵台灣'));
  assert.ok(Array.from(text).length<=500);
@@ -93,6 +93,7 @@ test('native cron uses official source, creates one Threads publication, and nev
  const officialFetch=async url=>{
    newsFetches++;
    if(url===FEED_URL)return {ok:true,status:200,url:FEED_URL,text:async()=>rss([good])};
+   if(url===FEED_SOURCES[1].url)return {ok:true,status:200,url:FEED_SOURCES[1].url,text:async()=>rss([])};
    if(url===good.url)return {ok:true,status:200,url:good.url};
    throw Error('Unexpected official URL '+url);
  };
@@ -111,7 +112,7 @@ test('native cron uses official source, creates one Threads publication, and nev
   assert.equal(first.submitted,1);
   assert.equal(first.permalink,'https://www.threads.com/@catpaw/post/123');
   assert.equal(publishCalls,1);
-  assert.equal(newsFetches,2);
+  assert.equal(newsFetches,3);
 
   const duplicate=await runOfficialScout(env,NOW,officialFetch);
   assert.equal(duplicate.skipped_duplicate_run,true);
@@ -125,7 +126,7 @@ test('native cron uses official source, creates one Threads publication, and nev
 test('when RSS unavailable, scout records error and posts nothing',async()=>{
  const store=fakeDb(),env={DB:store.DB,FACTORY_P5_OFFICIAL_SCOUT_ENABLED:'true',
    FACTORY_P5_AUTO_SEND:'true',FACTORY_P5_ALLOW_EXTERNAL_PUBLISH:'true'};
- const result=await runOfficialScout(env,NOW,async()=>({ok:false,status:503,url:FEED_URL}));
+ const result=await runOfficialScout(env,NOW,async url=>({ok:false,status:503,url}));
  assert.equal(result.status,'error');
  assert.equal(result.published,0);
  assert.equal(store.runs.size,1);
@@ -146,4 +147,26 @@ test('public scout status shows only safe counters and public post URL, no secre
  assert.equal(result.latest.status,'no_fresh');
  assert.equal(JSON.stringify(result).includes('NEVER_EXPOSE_THIS'),false);
  assert.equal(result.no_private_credentials,true);
+});
+
+test('Taipei Tourism Department RSS is supported and political news excluded',()=>{
+ const city={title:'臺北夜市新活動推出全新親子節慶體驗',url:'https://www.tpedoit.gov.taipei/News_Content.aspx?n=133DDB90561F19A8&s=ABC',time:NOW-10000};
+ const political={...city,title:'臺北市長選舉相關活動',url:'https://www.tpedoit.gov.taipei/News_Content.aspx?n=133DDB90561F19A8&s=XYZ'};
+ const out=parseOfficialFeed(rss([city,political]),NOW);
+ assert.equal(out.length,1);
+ assert.equal(out[0].source_label,'臺北市政府觀光傳播局');
+ assert.equal(out[0].category,'culture');
+ assert.match(buildOriginalPost(out[0]),/臺北市政府觀光傳播局/);
+});
+test('if one official RSS is temporarily blocked, a second valid feed still works',async()=>{
+ const store=fakeDb();
+ const env={DB:store.DB,FACTORY_P5_OFFICIAL_SCOUT_ENABLED:'true',
+  FACTORY_P5_AUTO_SEND:'true',FACTORY_P5_ALLOW_EXTERNAL_PUBLISH:'true'};
+ const run=await runOfficialScout(env,NOW,async url=>
+  url===FEED_URL ? {ok:false,status:403,url} :
+  {ok:true,status:200,url,text:async()=>rss([])}
+ );
+ assert.equal(run.status,'no_fresh');
+ assert.equal(run.published,0);
+ assert.match(run.detail,/RSS_HTTP_403/);
 });
