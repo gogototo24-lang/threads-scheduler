@@ -118,7 +118,7 @@ export async function officialScoutStatus(env){
 
 export async function publicOfficialScoutStatus(env) {
  const latest=await env.DB.prepare(
-  'SELECT started_at,finished_at,status,scanned,eligible,submitted,published,skipped,last_permalink FROM p5_official_scout_runs ORDER BY started_at DESC LIMIT 1'
+  'SELECT started_at,finished_at,status,scanned,eligible,submitted,published,skipped,last_permalink,detail FROM p5_official_scout_runs ORDER BY started_at DESC LIMIT 1'
  ).first();
  return {
    system:'CatPaw P5 Official Scout',
