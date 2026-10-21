@@ -33,6 +33,7 @@ export async function p5AuthStatus(env){
     threads_app_id_configured:!!env.THREADS_APP_ID,threads_app_secret_configured:!!env.THREADS_APP_SECRET,
     threads_token_stored:!!token,threads_account:username||null,
     threads_token_expires_at:expiresAt||null,threads_oauth_live_valid:false,oauth_error:null,
+    publish_permission_checked:false,publish_permission_verified:false,publish_scope_error:null,
     scout_secret_env_configured:!!env.P5_SCOUT_KEY,
     scoped_key_issued:!!scoutStored,
     scoped_key_usable:!!scoutStored&&Date.parse(scoutExpiresAt||'')>Date.now(),
@@ -45,7 +46,34 @@ export async function p5AuthStatus(env){
       const r=await fetch(uri);
       const body=await r.json().catch(()=>({}));
       response.threads_oauth_live_valid=r.ok&&!!body.id;
-      if(response.threads_oauth_live_valid)response.threads_account=String(body.username||username||'');
+      if(response.threads_oauth_live_valid){
+        response.threads_account=String(body.username||username||'');
+        // /me proves basic access only. Check the granted publishing scope with
+        // Meta's token debugger, without creating or publishing a container.
+        if(env.THREADS_APP_ID && env.THREADS_APP_SECRET){
+          try{
+            const appTokenUrl='https://graph.threads.net/oauth/access_token?'+new URLSearchParams({
+              grant_type:'client_credentials',client_id:env.THREADS_APP_ID,client_secret:env.THREADS_APP_SECRET
+            });
+            const appResponse=await fetch(appTokenUrl);
+            const appData=await appResponse.json().catch(()=>({}));
+            if(!appResponse.ok||!appData.access_token)throw Error('無法取得 Meta App 檢查憑證');
+            const debugUrl=GRAPH+'/debug_token?'+new URLSearchParams({
+              input_token:token,access_token:String(appData.access_token)
+            });
+            const debugResponse=await fetch(debugUrl);
+            const debugData=await debugResponse.json().catch(()=>({}));
+            if(!debugResponse.ok||!debugData?.data)throw Error('Meta Token Debugger 無法回傳權限清單');
+            const scopes=Array.isArray(debugData.data.scopes)?debugData.data.scopes:
+              (Array.isArray(debugData.data.granular_scopes)?debugData.data.granular_scopes.map(item=>item.scope):[]);
+            response.publish_permission_checked=true;
+            response.publish_permission_verified=debugData.data.is_valid===true&&scopes.includes('threads_content_publish');
+            if(!response.publish_permission_verified)response.publish_scope_error='Threads Token 無法確認具備 threads_content_publish 權限';
+          }catch(error){
+            response.publish_scope_error='發文權限尚無法獨立驗證：'+String(error?.message||error).slice(0,150);
+          }
+        }
+      }
       else response.oauth_error=String(body?.error?.message||'Threads OAuth HTTP '+r.status).slice(0,180);
     }catch(e){response.oauth_error='Threads 驗證查詢失敗：'+String(e?.message||e).slice(0,130);}
   }else response.oauth_error='尚未儲存 Threads OAuth Token';
@@ -117,8 +145,12 @@ async function fetchApi(method,path,body){
 async function refresh(){
  try{
  const s=await fetchApi('GET','status');
- el('oauth').textContent=(s.threads_oauth_live_valid?'✅ 已通過 Threads API：':'⚠️ 尚未驗證成功：')+
-   (s.threads_account||'未連接')+(s.oauth_error?'（'+s.oauth_error+'）':'');
+ el('oauth').textContent=(s.threads_oauth_live_valid?'✅ 帳號基本存取正常：':'⚠️ Threads 基本存取未通過：')+
+   (s.threads_account||'未連接')+'；發文權限：'+
+   (s.publish_permission_verified?'✅ 已由 Meta Token Debugger 驗證':
+    (s.publish_permission_checked?'⚠️ 尚未授權 threads_content_publish':'⚠️ 尚未獨立驗證'))+
+   (s.publish_scope_error?'（'+s.publish_scope_error+'）':'')+
+   (s.oauth_error?'（'+s.oauth_error+'）':'');
  el('oauth').className=s.threads_oauth_live_valid?'positive':'warning';
  el('scout').textContent=s.scoped_key_usable?'✅ 有效至 '+s.scoped_key_expires_at+
    '；外部客戶端是否接通：仍待驗證':
