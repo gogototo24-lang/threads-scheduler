@@ -1,10 +1,11 @@
 const TZ = 'Asia/Taipei';
 import legacy from './worker.js';
 import { handleHqRequest } from './universe-hq.js';
+import { fastLaneHealth, fastLaneSubmit, fastLaneActionStatus } from './p5-fastlane.js';
 import { generateImage, startVideo, pollVideo, providers, searchTrends, generateDrafts } from './ai-engine.js';
 import { factoryP3Status, factoryP3Create, factoryP3Get, factoryP3List, factoryP3Retry, processFactoryP3 } from './factory-p3.js';
 import { factoryP4Status, factoryP4Create, factoryP4Get, factoryP4List, processFactoryP4 } from './factory-p4.js';
-import { factoryP5Status, factoryP5Ingest, factoryP5BootstrapFromTrends, factoryP5Queue, factoryP5Candidate, factoryP5Review, factoryP5RecordOutcome, factoryP5Insights, factoryP5AccountIngest, factoryP5RelationshipEvent, factoryP5HighReachRadar, factoryP5PatrolQueue, factoryP5QueuePublicAction, factoryP5ActionQueue, factoryP5CrossPlatformIngest, factoryP5CrossPlatformQueue, processFactoryP5 } from './factory-p5.js';
+import { factoryP5Status, factoryP5Ingest, factoryP5BootstrapFromTrends, factoryP5Queue, factoryP5Candidate, factoryP5Review, factoryP5RecordOutcome, factoryP5Insights, factoryP5AccountIngest, factoryP5RelationshipEvent, factoryP5HighReachRadar, factoryP5PatrolQueue, factoryP5QueuePublicAction, factoryP5ActionQueue, factoryP5CrossPlatformIngest, factoryP5CrossPlatformQueue, processFactoryP5, processPublicActions } from './factory-p5.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -12,6 +13,18 @@ export default {
     if (url.pathname.startsWith('/api/factory/hq/')) return handleHqRequest(request, env);
     if (url.pathname === '/review' && request.method === 'GET') return reviewPage(request, env);
     if (url.pathname === '/api/factory/p5/status' && request.method === 'GET') return jsonCors(await factoryP5Status(env));
+    // Authenticated, least-privilege fastlane: admin/scout secret only, no public bypass.
+    if (url.pathname === '/api/factory/p5/fastlane/health' && request.method === 'GET')
+      return scoutGuarded(request,env,()=>fastLaneHealth(env));
+    if (url.pathname === '/api/factory/p5/fastlane' && request.method === 'POST')
+      return scoutGuarded(request,env,()=>fastLaneSubmit(request,env,
+        actionId=>processPublicActions(env,{
+          auto_send:String(env.FACTORY_P5_AUTO_SEND||'').toLowerCase()==='true',
+          hourly_action_limit:Math.max(1,Math.min(10,Number(env.FACTORY_P5_HOURLY_ACTION_LIMIT||10)))
+        },actionId)));
+    const p5FastMatch=url.pathname.match(/^\/api\/factory\/p5\/fastlane\/actions\/(p5fast-[a-f0-9]{40})$/);
+    if (p5FastMatch && request.method === 'GET')
+      return scoutGuarded(request,env,()=>fastLaneActionStatus(env,p5FastMatch[1]));
     if (url.pathname === '/api/factory/p5/accounts' && request.method === 'POST') return guarded(request, env, () => factoryP5AccountIngest(request, env));
     if (url.pathname === '/api/factory/p5/radar' && request.method === 'GET') return guarded(request, env, async () => factoryP5HighReachRadar(env, url.searchParams.get('limit') || 20));
     if (url.pathname === '/api/factory/p5/patrol' && request.method === 'GET') return guarded(request, env, async () => factoryP5PatrolQueue(env, url.searchParams.get('limit') || 8));
