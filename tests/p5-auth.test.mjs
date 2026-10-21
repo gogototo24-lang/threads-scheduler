@@ -59,16 +59,23 @@ test('OAuth readback checks actual /me and does not publish',async()=>{
   const {env}=db({'threads_access_token':'fake_token','threads_username':'catpaw'});
   const prev=globalThis.fetch;let called=0;
   globalThis.fetch=async uri=>{
-    assert.match(String(uri),/graph\.threads\.net\/v1\.0\/me/);
-    assert.equal(String(uri).includes('threads_publish'),false);
+    const url=String(uri);
+    assert.equal(url.includes('threads_publish'),false);
     called++;
-    return {ok:true,status:200,json:async()=>({id:'123',username:'real-catpaw'})};
+    if(url.includes('/v1.0/me?'))return {ok:true,status:200,json:async()=>({id:'123',username:'real-catpaw'})};
+    if(url.includes('/oauth/access_token?'))return {ok:true,status:200,json:async()=>({access_token:'app-token'})};
+    if(url.includes('/v1.0/debug_token?'))return {ok:true,status:200,json:async()=>({
+      data:{is_valid:true,scopes:['threads_basic','threads_content_publish']}
+    })};
+    throw Error('Unexpected request '+url);
   };
   try{
     const s=await p5AuthStatus(env);
     assert.equal(s.threads_oauth_live_valid,true);
+    assert.equal(s.publish_permission_checked,true);
+    assert.equal(s.publish_permission_verified,true);
     assert.equal(s.threads_account,'real-catpaw');
-    assert.equal(called,1);
+    assert.equal(called,3);
   }finally{globalThis.fetch=prev;}
 });
 test('create high-entropy scoped key, store digest only and verify with constant-time comparison',async()=>{
@@ -106,4 +113,38 @@ test('protected admin route rejects unauthorized requests and never issues crede
     headers:{'x-admin-key':'example-admin'}
   }),env,{});
   assert.equal(login.status,200);
+});
+
+test('readable /me without publishing scope is never reported as publish-ready',async()=>{
+ const {env}=db({'threads_access_token':'read-only-token','threads_username':'catpaw'});
+ const prev=globalThis.fetch;
+ globalThis.fetch=async uri=>{
+   const u=String(uri);
+   if(u.includes('/v1.0/me?'))return {ok:true,status:200,json:async()=>({id:'7',username:'catpaw'})};
+   if(u.includes('/oauth/access_token?'))return {ok:true,status:200,json:async()=>({access_token:'app-token'})};
+   if(u.includes('/v1.0/debug_token?'))return {ok:true,status:200,json:async()=>({data:{is_valid:true,scopes:['threads_basic']}})};
+   throw Error('Unexpected '+u);
+ };
+ try{
+   const status=await p5AuthStatus(env);
+   assert.equal(status.threads_oauth_live_valid,true);
+   assert.equal(status.publish_permission_checked,true);
+   assert.equal(status.publish_permission_verified,false);
+   assert.match(status.publish_scope_error,/threads_content_publish/);
+ }finally{globalThis.fetch=prev}
+});
+test('debugger errors cannot accidentally authorize publishing',async()=>{
+ const {env}=db({'threads_access_token':'read-only-token'});
+ const prev=globalThis.fetch;
+ globalThis.fetch=async uri=>{
+  if(String(uri).includes('/v1.0/me?'))return {ok:true,status:200,json:async()=>({id:'7',username:'catpaw'})};
+  return {ok:false,status:403,json:async()=>({error:{message:'not authorized'}})};
+ };
+ try{
+  const status=await p5AuthStatus(env);
+  assert.equal(status.threads_oauth_live_valid,true);
+  assert.equal(status.publish_permission_checked,false);
+  assert.equal(status.publish_permission_verified,false);
+  assert.match(status.publish_scope_error,/無法/);
+ }finally{globalThis.fetch=prev}
 });
