@@ -33,7 +33,7 @@ RUNNINGHUB_EST_NTD_PER_GPU_MIN = "0"
 # Public interaction mode: reply/quote/repost enabled with rate/risk gates; DMs permanently disabled.
 FACTORY_P5_ENABLED = "true"
 # P5 verified official-source autopost (culture RSS only; no new Metricool posts)
-FACTORY_P5_OFFICIAL_SCOUT_ENABLED = "true"
+FACTORY_P5_OFFICIAL_SCOUT_ENABLED = "false"
 FACTORY_P5_AUTO_SEND = "true"
 FACTORY_P5_ALLOW_REPLY = "true"
 FACTORY_P5_ALLOW_QUOTE = "true"
