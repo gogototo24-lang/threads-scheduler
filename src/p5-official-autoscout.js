@@ -139,10 +139,9 @@ export async function publicOfficialScoutStatus(env) {
        : /fetch|network|Failed/i.test(String(latest.detail||'')) ? 'RSS_NETWORK_FAILURE'
        : 'OFFICIAL_SOURCE_ERROR'
    ) : null,
-   read_error_excerpt:latest?.status==='error' && Number(latest.scanned)===0
-     ? String(latest.detail||'').replace(/(?:access_token|api[_-]?key|token|secret)=[^&\\s]+/gi,'   no_new_metricool_posts:true,
-   no_private_credentials:true'.split('=')[0]+'=[REDACTED]').slice(0,150)
-     : null,
+   read_error_excerpt: latest?.status==='error' && Number(latest.scanned)===0
+      ? String(latest.detail||'').replace(/(?:access_token|api[_-]?key|token|secret)=[^&\s]+/gi,'[REDACTED]').slice(0,150)
+      : null,
    no_new_metricool_posts:true,
    no_private_credentials:true
  };
