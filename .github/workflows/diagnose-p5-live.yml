@@ -45,4 +45,4 @@ jobs:
           curl --silent --show-error --location --max-time 20 --output /tmp/p5pili \
             --write-out 'HTTP:%{http_code} TYPE:%{content_type} FINAL:%{url_effective} BYTES:%{size_download}\n' \
             'https://www.pili.com.tw/' || true
-          python3 -c "from pathlib import Path; t=Path('/tmp/p5pili').read_text(errors='replace'); i=t.find('霹靂英雄戰紀'); print('HTML_BYTES',len(t),'TITLE_OFFSET',i); print(t[max(0,i-500):i+450].replace(chr(10),' ')[:950]); print('LATEST_TEXT',t.find('2026.10.'))" || true
+          python3 -c "from pathlib import Path; t=Path('/tmp/p5pili').read_text(errors='replace'); i=t.find('霹靂英雄戰紀'); print('HTML_BYTES',len(t),'TITLE_OFFSET',i); print(t[max(0,i-500):i+450].replace(chr(10),' ')[:950]); print('LATEST_TEXT',t.find('2026.10.')); k=t.find('2026.10.'); print('PILI_NEWS_CONTEXT',t[max(0,k-1500):k+900].replace(chr(10),' ')[:2400])" || true
