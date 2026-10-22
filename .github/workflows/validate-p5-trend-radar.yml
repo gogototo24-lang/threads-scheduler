@@ -1,0 +1,38 @@
+name: Validate P5 Taiwan Trend Radar
+
+on:
+  pull_request:
+    paths:
+      - 'src/p5-trend-radar.js'
+      - 'src/ai-worker.js'
+      - 'tests/p5-trend-radar.test.mjs'
+      - 'migrations/0014_p5_search_trend_radar.sql'
+      - 'wrangler.toml'
+      - '.github/workflows/validate-p5-trend-radar.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Check all new JS syntax
+        run: |
+          node --check src/p5-trend-radar.js
+          node --check src/ai-worker.js
+          node --check tests/p5-trend-radar.test.mjs
+      - name: Radar isolation and reliability
+        run: node --test tests/p5-trend-radar.test.mjs
+      - name: Existing P5 official scout regression
+        run: node --test tests/p5-official-autoscout.test.mjs
+      - name: Install dependencies
+        run: npm ci
+      - name: Worker dry-run
+        run: npx wrangler deploy --dry-run --outdir .wrangler-trends-test
