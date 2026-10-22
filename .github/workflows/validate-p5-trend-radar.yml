@@ -34,5 +34,12 @@ jobs:
         run: node --test tests/p5-official-autoscout.test.mjs
       - name: Install dependencies
         run: npm ci
+      - name: Read-only live Google Trends RSS probe
+        shell: bash
+        run: |
+          curl --location --silent --show-error --max-time 18 \
+            --write-out 'GOOGLE_TRENDS_HTTP=%{http_code} CONTENT_TYPE=%{content_type} BYTES=%{size_download}\n' \
+            --output /tmp/tw-trends.xml 'https://trends.google.com/trending/rss?geo=TW' || true
+          python3 -c "import xml.etree.ElementTree as ET; r=ET.parse('/tmp/tw-trends.xml').getroot(); ns={'ht':'https://trends.google.com/trending/rss'}; items=r.findall('.//item'); print('RSS_ITEMS',len(items)); [(print('TREND',x.findtext('title'),x.findtext('ht:approx_traffic',namespaces=ns),x.findtext('pubDate'))) for x in items[:3]]" || true
       - name: Worker dry-run
         run: npx wrangler deploy --dry-run --outdir .wrangler-trends-test
