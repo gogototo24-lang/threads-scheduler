@@ -1,0 +1,33 @@
+name: Validate P5 Google Trends D1 Fallback
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/p5_trends_to_d1.py'
+      - 'tests/test_p5_trends_to_d1.py'
+      - '.github/workflows/p5-trends-github-ingest.yml'
+      - 'wrangler.toml'
+      - '.github/workflows/validate-p5-github-fallback.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate D1 SQL generation and zero publishing side effects
+        run: python3 -m unittest discover -s tests -p 'test_p5_trends_to_d1.py' -v
+      - name: Require production-only push trigger for D1 write workflow
+        run: |
+          grep -q 'branches: \[main\]' .github/workflows/p5-trends-github-ingest.yml
+          grep -q 'CLOUDFLARE_API_TOKEN: ' .github/workflows/p5-trends-github-ingest.yml
+      - name: Install dependencies and validate Worker binding
+        run: |
+          npm ci
+          npx wrangler deploy --dry-run --outdir .wrangler-safe-fallback
