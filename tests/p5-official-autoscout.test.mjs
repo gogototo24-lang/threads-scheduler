@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {FEED_URL,FEED_SOURCES,parseOfficialFeed,buildOriginalPost,runOfficialScout,publicOfficialScoutStatus} from '../src/p5-official-autoscout.js';
+import {FEED_URL,FEED_SOURCES,PILI_SOURCE,parsePiliHeadlines,parseOfficialFeed,buildOriginalPost,runOfficialScout,publicOfficialScoutStatus} from '../src/p5-official-autoscout.js';
 
 const NOW=Date.now();
 function rss(articles){
@@ -112,7 +112,7 @@ test('native cron uses official source, creates one Threads publication, and nev
   assert.equal(first.submitted,1);
   assert.equal(first.permalink,'https://www.threads.com/@catpaw/post/123');
   assert.equal(publishCalls,1);
-  assert.equal(newsFetches,3);
+  assert.equal(newsFetches,4);
 
   const duplicate=await runOfficialScout(env,NOW,officialFetch);
   assert.equal(duplicate.skipped_duplicate_run,true);
@@ -169,4 +169,60 @@ test('if one official RSS is temporarily blocked, a second valid feed still work
  assert.equal(run.status,'no_fresh');
  assert.equal(run.published,0);
  assert.match(run.detail,/RSS_HTTP_403/);
+});
+
+
+function piliHtml(when,title='霹靂布袋戲全新劇集精彩武戲登場') {
+ const local=new Date(when+8*3600000).toISOString();
+ const stamp=local.replace(/[-:TZ.]/g,'').slice(0,14);
+ const date=local.slice(0,10).replace(/-/g,'.');
+ return '<!DOCTYPE html><html><body><div class="ui_newslist">'+
+   '<a class="ui_newsitem" href="/news-view/'+stamp+'0000000/">'+
+   '<div class="m_date h5 h-md-8">'+date+'</div>'+
+   '<h5 class="m_title h5 h-md-7">'+title+'</h5></a>'+
+   '</div></body></html>';
+}
+test('official PILI news requires precise timestamp, safe title and correct primary host',()=>{
+ const current=NOW-60000;
+ const html=piliHtml(current);
+ const rows=parsePiliHeadlines(html,NOW);
+ assert.equal(rows.length,1);
+ assert.equal(rows[0].category,'puppetry');
+ assert.ok(rows[0].source_url.startsWith('https://www.pili.com.tw/news-view/'));
+ assert.match(buildOriginalPost(rows[0]),/貓掌江湖/);
+ assert.match(buildOriginalPost(rows[0]),/月扇影喵/);
+ assert.ok(Array.from(buildOriginalPost(rows[0])).length<=500);
+ assert.equal(parsePiliHeadlines(piliHtml(NOW-86400000),NOW).length,0,'older than 12h never posted');
+ assert.equal(parsePiliHeadlines(piliHtml(NOW,'霹靂政治選舉活動'),NOW).length,0,'political keywords blocked');
+ assert.equal(parsePiliHeadlines(html.replace('m_date h5','wrong_date h5'),NOW).length,0);
+});
+test('native cron can publish a fresh primary-source PILI story without n8n',async()=>{
+ const state=fakeDb();
+ const env={DB:state.DB,FACTORY_P5_OFFICIAL_SCOUT_ENABLED:'true',
+  FACTORY_P5_AUTO_SEND:'true',FACTORY_P5_ALLOW_EXTERNAL_PUBLISH:'true'};
+ const recent=piliHtml(NOW-60000);
+ const officialFetch=async url=>{
+  if(url===PILI_SOURCE.url)return {ok:true,status:200,url:PILI_SOURCE.url,text:async()=>recent};
+  if(FEED_SOURCES.some(x=>x.url===url))return {ok:true,status:200,url,text:async()=>rss([])};
+  if(url.startsWith('https://www.pili.com.tw/news-view/'))return {ok:true,status:200,url};
+  throw Error('Unexpected '+url);
+ };
+ const before=globalThis.fetch;let publishes=0;
+ globalThis.fetch=async url=>{
+  const u=String(url);
+  if(u.includes('/me/threads_publish?')){publishes++;return {ok:true,status:200,json:async()=>({id:'pili-thread-001'})}}
+  if(u.includes('/me/threads?'))return {ok:true,status:200,json:async()=>({id:'pili-container-001'})};
+  if(u.includes('fields=permalink'))return {ok:true,status:200,json:async()=>({permalink:'https://www.threads.com/@water3838/post/pili001'})};
+  throw Error('Unexpected outbound '+u);
+ };
+ try{
+  const one=await runOfficialScout(env,NOW,officialFetch);
+  assert.equal(one.status,'published',JSON.stringify(one));
+  assert.equal(one.published,1);
+  assert.equal(one.submitted,1);
+  assert.equal(publishes,1);
+  const next=await runOfficialScout(env,NOW+600000,officialFetch);
+  assert.equal(next.published,0,'same article must not repeat in later slot');
+  assert.equal(publishes,1);
+ }finally{globalThis.fetch=before}
 });
