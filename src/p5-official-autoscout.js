@@ -10,6 +10,8 @@ export const FEED_SOURCES=Object.freeze([
   {url:'https://www.tpedoit.gov.taipei/OpenData.aspx?SN=FFD154F901BB9155',host:'www.tpedoit.gov.taipei',label:'臺北市政府觀光傳播局',category:'culture'}
 ]);
 export const FEED_URL=FEED_SOURCES[0].url;
+export const PILI_SOURCE=Object.freeze({url:'https://www.pili.com.tw/news-browse.php',host:'www.pili.com.tw',label:'霹靂布袋戲官方網站',category:'puppetry'});
+const PILI_ALLOW=/霹靂|布袋戲|劇集|東離劍|素還真|新品|首映|新章|演出|音樂|粉絲|展覽|劇情|活動|發行|開播|戲偶|偶戲/;
 const OFFICIAL_HOSTS=new Set(FEED_SOURCES.map(x=>x.host));
 // A government press release may show a date but not a precise release time.
 // Twelve hours allows genuine same-day news but prevents days-old replays.
@@ -57,11 +59,47 @@ export function parseOfficialFeed(xml,now=Date.now()) {
  }
  return result.sort((a,b)=>Date.parse(b.published_at)-Date.parse(a.published_at));
 }
+// Official puppetry news URLs encode precise local timestamps.
+// Never infer publication time from a date-only label.
+export function parsePiliHeadlines(html, now=Date.now()) {
+  if(typeof html!=='string'||html.length<100||html.length>2097152||
+     !/<html[\s>]/i.test(html)) throw Error('霹靂官網 HTML 內容無效');
+  const items=[],seen=new Set();
+  const news=/<a\b[^>]*class=["'][^"']*\bui_newsitem\b[^"']*["'][^>]*href=["'](\/news-view\/(\d{14,})\/)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  for(const match of html.matchAll(news)) {
+    if(items.length>=30)break;
+    const path=match[1],digits=match[2],block=match[3];
+    const titleMatch=block.match(/<h5\b[^>]*class=["'][^"']*\bm_title\b[^"']*["'][^>]*>([\s\S]*?)<\/h5>/i);
+    const dateMatch=block.match(/<div\b[^>]*class=["'][^"']*\bm_date\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i);
+    if(!titleMatch||!dateMatch)continue;
+    const title=decode(titleMatch[1]);
+    const label=decode(dateMatch[1]).replace(/\s/g,'');
+    if(!/^\d{4}\.\d{2}\.\d{2}$/.test(label))continue;
+    if(title.length<7||title.length>220||!PILI_ALLOW.test(title)||DENY.test(title))continue;
+    const date=digits.slice(0,8);
+    if(label.replace(/\./g,'')!==date)continue;
+    const year=Number(digits.slice(0,4)),month=Number(digits.slice(4,6)),
+      day=Number(digits.slice(6,8)),hour=Number(digits.slice(8,10)),
+      minute=Number(digits.slice(10,12)),second=Number(digits.slice(12,14));
+    if(month<1||month>12||day<1||day>31||hour>23||minute>59||second>59)continue;
+    const timestamp=Date.UTC(year,month-1,day,hour-8,minute,second);
+    const localDate=new Date(timestamp+8*3600000).toISOString().slice(0,10).replace(/-/g,'');
+    if(localDate!==date||timestamp>now+180000||now-timestamp>MAX_AGE)continue;
+    const source_url='https://www.pili.com.tw'+path;
+    if(seen.has(source_url))continue;seen.add(source_url);
+    items.push({title,source_url,published_at:new Date(timestamp).toISOString(),
+      source_label:PILI_SOURCE.label,category:'puppetry',host:PILI_SOURCE.host});
+  }
+  return items.sort((a,b)=>Date.parse(b.published_at)-Date.parse(a.published_at));
+}
+
 export function buildOriginalPost(item) {
  const source=item.source_label || FEED_SOURCES.find(s=>s.host===new URL(item.source_url).hostname)?.label || '官方機關';
  const title=item.title.slice(0,110);
  const tourism=item.category==='tourism'||item.source_url.includes('taiwan.net.tw');
- return tourism
+ return item.category==='puppetry'
+   ? '🎭 貓掌江湖・布袋戲速報！\n'+source+'發布新消息：「'+title+'」\n月扇影喵黑扇一合：你最想看到哪段精彩武戲？😼\n官方來源：'+item.source_url+'\n#貓掌江湖 #布袋戲 #台灣文化'
+   : tourism
    ? '🐾 喵台灣玩樂雷達！\n'+source+'最新消息：「'+title+'」\n這個地方你去過嗎？推薦哪一個必玩亮點？😸\n詳情以官方公告為準：'+item.source_url+'\n#喵台灣 #台灣旅遊'
    : '🎭 喵台灣藝文雷達！\n'+source+'發布消息：「'+title+'」\n這個活動你會想參加嗎？你最期待哪一部分？😸\n詳情以官方公告為準：'+item.source_url+'\n#喵台灣 #台灣文化';
 }
@@ -102,9 +140,18 @@ export async function runOfficialScout(env,now=Date.now(),fetcher=fetch){
    entries.push(...parsed);
   }catch(error){sourceErrors.push(String(error?.message||error).slice(0,100));}
  }
+ // First-party PILI newsroom adds relevant puppetry topics without n8n.
+ try {
+  const {response,resolved}=await safeFetch(fetcher,PILI_SOURCE.url,9000);
+  if(!response.ok||resolved.hostname.toLowerCase()!==PILI_SOURCE.host)
+    throw Error(PILI_SOURCE.label+' HTTP_'+response.status);
+  const html=await response.text();
+  out.scanned+=(html.match(/class=["'][^"']*\bui_newsitem\b/gi)||[]).length;
+  entries.push(...parsePiliHeadlines(html,now));
+ } catch(e) { sourceErrors.push(String(e?.message||e).slice(0,110)); }
  out.eligible=entries.length;
  if(sourceErrors.length)out.detail='來源異常：'+sourceErrors.join('；');
- if(sourceErrors.length===FEED_SOURCES.length){
+ if(sourceErrors.length===FEED_SOURCES.length+1){
   out.status='error';await writeRun(env,slot,out);
   return {enabled:true,slot,...out};
  }
@@ -148,9 +195,9 @@ export async function officialScoutStatus(env){
   .bind(new Date(Date.now()-86400000).toISOString()).all();
  return {
   enabled:String(env.FACTORY_P5_OFFICIAL_SCOUT_ENABLED||'').toLowerCase()==='true',
-  sources:FEED_SOURCES.map(s=>({name:s.label,url:s.url})),
+  sources:[...FEED_SOURCES,PILI_SOURCE].map(s=>({name:s.label,url:s.url})),
   frequency:'every 10 minutes via Cloudflare Cron',
-  coverage:'政府官方觀光／藝文 RSS；不包括未授權的社群全網搜尋',
+  coverage:'政府官方觀光／藝文 RSS 與霹靂布袋戲官方新聞；不包括未授權社群全網搜尋',
   latest:latest||null,last_24h:statuses.results||[],metricool_new_posts:false
  };
 }
@@ -161,8 +208,8 @@ export async function publicOfficialScoutStatus(env){
  return {
   system:'CatPaw P5 Official Scout',
   enabled:String(env.FACTORY_P5_OFFICIAL_SCOUT_ENABLED||'').toLowerCase()==='true',
-  sources:FEED_SOURCES.map(s=>({name:s.label,url:s.url})),
-  coverage:'官方政府觀光／藝文 RSS，非所有 Threads 社群熱點',
+  sources:[...FEED_SOURCES,PILI_SOURCE].map(s=>({name:s.label,url:s.url})),
+  coverage:'政府官方觀光／藝文 RSS、霹靂布袋戲官方新聞；非所有 Threads 社群熱點',
   check_interval_minutes:10,
   latest:latest?{
    started_at:latest.started_at,finished_at:latest.finished_at,
@@ -170,6 +217,7 @@ export async function publicOfficialScoutStatus(env){
    submitted:latest.submitted,published:latest.published,skipped:latest.skipped,
    permalink:latest.last_permalink||null
   }:null,
+  source_note:latest?.status==='no_fresh'?'已掃描；目前尚無12小時內符合安全與時效條件的新消息，舊聞不會自動重發':null,
   diagnostic_code:latest?.status==='error' ? (
    /HTTP[_ ](\d{3})/.test(String(latest.detail||''))
      ? 'RSS_HTTP_'+String(latest.detail).match(/HTTP[_ ](\d{3})/)[1]
