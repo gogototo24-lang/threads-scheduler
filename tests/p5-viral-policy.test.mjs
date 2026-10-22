@@ -94,7 +94,8 @@ function fakeEnv(){
          items.set(url,{id:old?.id||id,action_id:old?.action_id||null,status:old?.status||'scored',source_platform:platform});
          return {meta:{changes:1}};
        }
-       if(sql.includes('INSERT INTO social_actions')){
+       if(sql.includes('INSERT OR IGNORE INTO social_actions')){
+         if(actions.has(params[0]))return {meta:{changes:0}};
          actions.set(params[0],{id:params[0],action_type:params[4],target_thread_id:params[5],text:params[6]});
          return {meta:{changes:1}};
        }
