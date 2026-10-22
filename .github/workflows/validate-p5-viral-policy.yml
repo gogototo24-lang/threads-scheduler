@@ -1,0 +1,36 @@
+name: Validate P5 Viral Intake and Neutral Profiles
+
+on:
+  pull_request:
+    paths:
+      - 'src/p5-viral-policy.js'
+      - 'src/factory-p5.js'
+      - 'tests/p5-viral-policy.test.mjs'
+      - '.github/workflows/validate-p5-viral-policy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: JavaScript syntax
+        run: |
+          node --check src/p5-viral-policy.js
+          node --check src/factory-p5.js
+          node --check tests/p5-viral-policy.test.mjs
+      - name: Verify topic, copyright, political neutrality and anti-duplicates
+        run: node --test tests/p5-viral-policy.test.mjs
+      - name: Existing P5 fastlane regression tests
+        run: node --test tests/p5-fastlane.test.mjs
+      - name: Install dependencies
+        run: npm ci
+      - name: Cloudflare Worker safe build check
+        run: npx wrangler deploy --dry-run --outdir .wrangler-viral-test

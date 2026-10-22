@@ -1,3 +1,4 @@
+import {assessViralTopic} from './p5-viral-policy.js';
 function now(){ return new Date().toISOString(); }
 function id(prefix){ return prefix+'-'+crypto.randomUUID(); }
 function clamp(v,min=0,max=100){ const n=Number(v); return Number.isFinite(n)?Math.max(min,Math.min(max,n)):0; }
@@ -52,7 +53,7 @@ function scoreCandidate(input){
   const freshness = input.age_hours==null ? 55 : clamp(100-(Number(input.age_hours)||0)*3,0,100);
   const heat=Math.round(clamp(engagement*0.7+freshness*0.3));
 
-  const relevanceWords=['台灣','taiwan','貓','cat','ai','人工智慧','影片','shorts','threads','科技','交通','娛樂','生活','電影','音樂','mv'];
+  const relevanceWords=['台灣','taiwan','貓','cat','ai','人工智慧','影片','shorts','threads','科技','交通','娛樂','生活','電影','音樂','mv','運動','球賽','影劇','藝人','人物','文化','公共人物','歷史','時事','話題','熱門','新聞','網紅'];
   const relevance=Math.round(clamp(35+keywordScore(combined,relevanceWords,9)));
 
   const questionLike=/[？?]|你覺得|大家|怎麼|為什麼|有沒有|推薦|誰知道/.test(text);
@@ -364,18 +365,23 @@ function externalHeat(metrics){
 }
 
 function remixExternalItem(item){
-  const title=cleanExcerpt(item.title||item.source_summary||'這個話題',72);
-  const summary=cleanExcerpt(item.source_summary||'',150);
+  const title=cleanExcerpt(item.title||'近期熱門話題',75);
   const source=String(item.source_platform||'web').toUpperCase();
   const url=String(item.source_url||'').trim();
   const universe=String(item.universe||'喵台灣宇宙');
   const hook=universe==='貓掌江湖'
-    ? `江湖巡到 ${source}，這題「${title}」太有戲了。`
-    : `喵台灣巡到 ${source}，這題「${title}」真的很值得聊。`;
-  const body=summary
-    ? `${summary}\n\n換成喵台灣版本，我們關心的是：這件事如果落到台灣日常，大家第一個反應會是什麼？`
-    : `換成喵台灣版本，我們關心的是：這件事如果落到台灣日常，大家第一個反應會是什麼？`;
-  return `${hook}\n\n${body}\n\n來源：${url}`.slice(0,480);
+    ? '🎭 江湖話題雷達｜'+title
+    : '🐾 喵台灣熱門雷達｜'+title;
+  // The source summary must not be reproduced verbatim. Use only the topic
+  // headline and a new, original discussion question, with attribution.
+  return Array.from(hook+'\n社群對這個話題討論熱烈。你最在意哪一個細節？歡迎說說不同觀察。\n'+
+    '來源（'+source+'）：'+url).slice(0,490).join('');
+}
+
+async function crossPlatformActionId(sourceUrl){
+  const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(sourceUrl));
+  const bytes=[...new Uint8Array(digest)];
+  return 'xplat-'+bytes.map(x=>x.toString(16).padStart(2,'0')).join('').slice(0,40);
 }
 
 export async function factoryP5CrossPlatformIngest(request,env){
@@ -404,7 +410,13 @@ export async function factoryP5CrossPlatformIngest(request,env){
       age_hours:raw.age_hours
     });
     const heat=Math.max(scored.heat,externalHeat(raw.metrics||{}));
-    const risk=scored.riskLevel;
+    const plan=assessViralTopic(raw,{riskLevel:scored.riskLevel,heat,relevance:scored.relevance});
+    const risk=plan.risk_level;
+    // One source URL -> one outbound action. Re-scanning can update metrics,
+    // but must never create another queued or already-sent publication.
+    const existing=await env.DB.prepare(
+      'SELECT id,action_id,status FROM social_cross_platform_items WHERE source_url=? LIMIT 1'
+    ).bind(sourceUrl).first();
     const item={
       id:id('xplat'),
       source_platform:platform,
@@ -419,7 +431,7 @@ export async function factoryP5CrossPlatformIngest(request,env){
       risk_level:risk,
       universe:String(raw.universe||'喵台灣宇宙').slice(0,80)
     };
-    item.remix_text=remixExternalItem(item);
+    item.remix_text=plan.text||remixExternalItem(item);
 
     await env.DB.prepare(
       `INSERT INTO social_cross_platform_items
@@ -437,18 +449,29 @@ export async function factoryP5CrossPlatformIngest(request,env){
     ).run();
 
     let actionId=null;
-    const eligible=cfg.allow_external_publish && cfg.auto_send && risk==='low' && heat>=55 && scored.relevance>=55;
-    if(eligible){
-      actionId=id('act');
-      await env.DB.prepare(
-        `INSERT INTO social_actions
+    const eligible=cfg.allow_external_publish && cfg.auto_send && plan.eligible===true;
+    if(eligible && !existing?.action_id){
+      const fixedId=await crossPlatformActionId(sourceUrl);
+      const insertAction=await env.DB.prepare(
+        `INSERT OR IGNORE INTO social_actions
           (id,candidate_id,reply_draft_id,platform,action_type,target_thread_id,text,status,risk_level,scheduled_at,created_at,updated_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
-      ).bind(actionId,null,null,'threads','original_post',null,item.remix_text,'queued','low',now(),now(),now()).run();
-      await env.DB.prepare("UPDATE social_cross_platform_items SET status='queued',action_id=?,updated_at=? WHERE source_url=?")
-        .bind(actionId,now(),sourceUrl).run();
+      ).bind(fixedId,null,null,'threads',plan.action_type,plan.target_thread_id,
+        plan.action_type==='repost'?'':item.remix_text,'queued','low',now(),now(),now()).run();
+      // One stable outbound ID per URL: even racing scout requests can create
+      // at most one action. Do not mistake an ignored insert for a new post.
+      actionId=insertAction.meta?.changes?fixedId:null;
+      await env.DB.prepare("UPDATE social_cross_platform_items SET status='queued',action_id=?,updated_at=? WHERE source_url=? AND action_id IS NULL")
+        .bind(fixedId,now(),sourceUrl).run();
     }
-    created.push({source_url:sourceUrl,source_platform:platform,heat_score:heat,relevance_score:scored.relevance,risk_level:risk,queued:!!actionId,action_id:actionId});
+    created.push({
+      source_url:sourceUrl,source_platform:platform,category:plan.category,
+      heat_score:heat,relevance_score:scored.relevance,risk_level:risk,
+      verified_viral:plan.viral===true,priority:plan.priority||null,
+      decision:existing?.action_id?'already_queued_or_published':plan.reason,
+      queued:!!actionId,action_id:actionId||existing?.action_id||null,
+      action_type:actionId?plan.action_type:null
+    });
   }
   return {ok:true,created};
 }
