@@ -378,6 +378,12 @@ function remixExternalItem(item){
     '來源（'+source+'）：'+url).slice(0,490).join('');
 }
 
+async function crossPlatformActionId(sourceUrl){
+  const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(sourceUrl));
+  const bytes=[...new Uint8Array(digest)];
+  return 'xplat-'+bytes.map(x=>x.toString(16).padStart(2,'0')).join('').slice(0,40);
+}
+
 export async function factoryP5CrossPlatformIngest(request,env){
   const cfg=config(env);
   if(!cfg.enabled) throw new Error('P5 尚未啟用');
@@ -445,15 +451,18 @@ export async function factoryP5CrossPlatformIngest(request,env){
     let actionId=null;
     const eligible=cfg.allow_external_publish && cfg.auto_send && plan.eligible===true;
     if(eligible && !existing?.action_id){
-      actionId=id('act');
-      await env.DB.prepare(
-        `INSERT INTO social_actions
+      const fixedId=await crossPlatformActionId(sourceUrl);
+      const insertAction=await env.DB.prepare(
+        `INSERT OR IGNORE INTO social_actions
           (id,candidate_id,reply_draft_id,platform,action_type,target_thread_id,text,status,risk_level,scheduled_at,created_at,updated_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
-      ).bind(actionId,null,null,'threads',plan.action_type,plan.target_thread_id,
+      ).bind(fixedId,null,null,'threads',plan.action_type,plan.target_thread_id,
         plan.action_type==='repost'?'':item.remix_text,'queued','low',now(),now(),now()).run();
-      await env.DB.prepare("UPDATE social_cross_platform_items SET status='queued',action_id=?,updated_at=? WHERE source_url=?")
-        .bind(actionId,now(),sourceUrl).run();
+      // One stable outbound ID per URL: even racing scout requests can create
+      // at most one action. Do not mistake an ignored insert for a new post.
+      actionId=insertAction.meta?.changes?fixedId:null;
+      await env.DB.prepare("UPDATE social_cross_platform_items SET status='queued',action_id=?,updated_at=? WHERE source_url=? AND action_id IS NULL")
+        .bind(fixedId,now(),sourceUrl).run();
     }
     created.push({
       source_url:sourceUrl,source_platform:platform,category:plan.category,
