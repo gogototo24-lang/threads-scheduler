@@ -86,8 +86,7 @@ def generate_sql(content: bytes, now: dt.datetime) -> tuple[str, int]:
     time = now.isoformat().replace("+00:00", "Z")
     slot = now.replace(minute=(now.minute // 10) * 10, second=0, microsecond=0)
     slottext = slot.isoformat().replace("+00:00", "Z")
-    sql = ["-- Google Trends TW first-party search signals; zero publication side effects.",
-           "BEGIN TRANSACTION;"]
+    sql = ["-- Google Trends TW first-party search signals; zero publication side effects."]
     for item in items:
         keyword = item["keyword"]
         uid = "gtrend-" + hashlib.sha256(("TW:" + keyword.lower()).encode("utf-8")).hexdigest()[:40]
@@ -117,7 +116,7 @@ def generate_sql(content: bytes, now: dt.datetime) -> tuple[str, int]:
     )
     cutoff = (now - dt.timedelta(days=30)).isoformat().replace("+00:00", "Z")
     sql.append(f"DELETE FROM p5_search_trends WHERE last_seen_at<{q(cutoff)};")
-    sql.extend(["COMMIT;", ""])
+    sql.append("")
     return "\n".join(sql), len(items)
 
 
