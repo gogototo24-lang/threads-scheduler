@@ -46,3 +46,9 @@ jobs:
             --write-out 'HTTP:%{http_code} TYPE:%{content_type} FINAL:%{url_effective} BYTES:%{size_download}\n' \
             'https://www.pili.com.tw/' || true
           python3 -c "from pathlib import Path; t=Path('/tmp/p5pili').read_text(errors='replace'); i=t.find('霹靂英雄戰紀'); print('HTML_BYTES',len(t),'TITLE_OFFSET',i); print(t[max(0,i-500):i+450].replace(chr(10),' ')[:950]); print('LATEST_TEXT',t.find('2026.10.')); k=t.find('2026.10.'); print('PILI_NEWS_CONTEXT',t[max(0,k-1500):k+900].replace(chr(10),' ')[:2400])" || true
+
+      - name: Validate PILI news browse markup (read only)
+        shell: bash
+        run: |
+          curl -fsSL --max-time 20 'https://www.pili.com.tw/news-browse.php' -o /tmp/pilinews || true
+          python3 -c "from pathlib import Path; import re; t=Path('/tmp/pilinews').read_text(errors='replace'); a=re.findall(r'<a\\s+class=[\\\"\\\']ui_newsitem[\\\"\\\'][^>]*href=[\\\"\\\']([^\\\"\\\']+)',t,re.I); print('PILI_NEWS_LINKS:',a[:8]); p=t.find('ui_newsitem'); print('HTML_CONTEXT:',t[max(0,p-100):p+900].replace(chr(10),' ')[:1000])" || true
