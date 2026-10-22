@@ -34,6 +34,8 @@ RUNNINGHUB_EST_NTD_PER_GPU_MIN = "0"
 FACTORY_P5_ENABLED = "true"
 # P5 verified official-source autopost (Taiwan tourism + Taipei tourism official feeds; never Metricool)
 FACTORY_P5_OFFICIAL_SCOUT_ENABLED = "true"
+# Google Trends official Taiwan RSS is discovery-only; does not post unverified trends.
+FACTORY_P5_TREND_RADAR_ENABLED = "true"
 FACTORY_P5_AUTO_SEND = "true"
 FACTORY_P5_ALLOW_REPLY = "true"
 FACTORY_P5_ALLOW_QUOTE = "true"

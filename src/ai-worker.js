@@ -4,6 +4,7 @@ import { handleHqRequest } from './universe-hq.js';
 import { p5AuthPage,p5AuthStatus,issueScopedScoutKey,isScopedScoutKey } from './p5-auth.js';
 import { fastLaneHealth, fastLaneSubmit, fastLaneActionStatus } from './p5-fastlane.js';
 import { runOfficialScout, officialScoutStatus, publicOfficialScoutStatus } from './p5-official-autoscout.js';
+import {runTaiwanTrendRadar,publicTaiwanTrendRadar} from './p5-trend-radar.js';
 import { generateImage, startVideo, pollVideo, providers, searchTrends, generateDrafts } from './ai-engine.js';
 import { factoryP3Status, factoryP3Create, factoryP3Get, factoryP3List, factoryP3Retry, processFactoryP3 } from './factory-p3.js';
 import { factoryP4Status, factoryP4Create, factoryP4Get, factoryP4List, processFactoryP4 } from './factory-p4.js';
@@ -27,6 +28,8 @@ export default {
       return guarded(request,env,()=>officialScoutStatus(env));
     if (url.pathname === '/api/factory/p5/official-scout/public' && request.method === 'GET')
       return jsonCors(await publicOfficialScoutStatus(env));
+    if (url.pathname === '/api/factory/p5/trends/public' && request.method === 'GET')
+      return jsonCors(await publicTaiwanTrendRadar(env));
     // Authenticated, least-privilege fastlane: admin/scout secret only, no public bypass.
     if (url.pathname === '/api/factory/p5/fastlane/health' && request.method === 'GET')
       return scoutGuarded(request,env,()=>fastLaneHealth(env));
@@ -81,6 +84,7 @@ export default {
   async scheduled(controller, env, ctx) {
     // Independent cron promise: failed AI mock scan must not stop verified P5 news scouting.
     ctx.waitUntil(runOfficialScout(env).catch(error => console.error('P5 official scout failed:', String(error))));
+    ctx.waitUntil(runTaiwanTrendRadar(env).catch(error => console.error('P5 trend radar failed:', String(error))));
     ctx.waitUntil((async () => {
       await legacy.scheduled(controller, env, ctx);
       const last = await setting(env, 'ai_last_scan');
