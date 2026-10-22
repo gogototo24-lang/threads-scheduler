@@ -105,7 +105,6 @@ function fakeEnv(){
        throw Error('Unexpected run '+sql);
      }
    }}}}
-  }
  };
 }
 test('repeated high-reach ingest never queues a duplicate action',async()=>{
