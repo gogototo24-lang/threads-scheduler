@@ -1,8 +1,9 @@
-name: Diagnose P5 Production (Read Only)
+name: Diagnose P5 Production Read Only
 
 on:
   push:
-    paths: ['.github/workflows/diagnose-p5-live.yml']
+    paths:
+      - ".github/workflows/diagnose-p5-live.yml"
   workflow_dispatch:
 
 permissions:
@@ -12,37 +13,22 @@ jobs:
   inspect:
     runs-on: ubuntu-latest
     steps:
-      - name: Read deployed P5 public operational status
+      - name: Public Cloudflare status (no authorization)
         shell: bash
         run: |
-          set -uo pipefail
-          echo "=== Cloudflare official-scout public response ==="
-          curl --silent --show-error --location --max-time 18 -w '\nHTTP_STATUS:%{http_code}\n' \
-            "https://threads-scheduler.gogototo24.workers.dev/api/factory/p5/official-scout/public" | head -c 3800
+          echo '=== P5 official scout public status ==='
+          curl -fsSL --max-time 18 'https://threads-scheduler.gogototo24.workers.dev/api/factory/p5/official-scout/public' || true
           echo
-          echo "=== Cloudflare public P5 status ==="
-          curl --silent --show-error --location --max-time 18 -w '\nHTTP_STATUS:%{http_code}\n' \
-            "https://threads-scheduler.gogototo24.workers.dev/api/factory/p5/status" | head -c 2800
+          echo '=== P5 public status ==='
+          curl -fsSL --max-time 18 'https://threads-scheduler.gogototo24.workers.dev/api/factory/p5/status' || true
           echo
-      - name: Check actual upstream government RSS responses
+      - name: Verify government RSS endpoints without posting
         shell: bash
         run: |
-          set -uo pipefail
-          for url in "https://www.taiwan.net.tw/rss.aspx?sno=0001001" "https://www.tpedoit.gov.taipei/OpenData.aspx?SN=FFD154F901BB9155"; do
-            echo "=== RSS source host: ${url%%/*} ==="
-            curl --silent --show-error --location --max-time 20 --output /tmp/feed.xml \
-              --write-out 'HTTP_STATUS:%{http_code} CONTENT_TYPE:%{content_type} REDIRECT_URL:%{url_effective} SIZE:%{size_download}\n' "$url" || true
-            python3 - <<'PY'
-import xml.etree.ElementTree as E
-try:
-    root=E.parse('/tmp/feed.xml').getroot()
-    items=list(root.iter('item')) + list(root.iter('{http://www.w3.org/2005/Atom}entry'))
-    print('PARSE_OK',root.tag,'ITEMS',len(items))
-    for item in items[:2]:
-        print('TITLE', (item.findtext('title') or '')[:120])
-        print('DATE', (item.findtext('pubDate') or item.findtext('{http://www.w3.org/2005/Atom}updated') or '')[:90])
-        print('LINK', (item.findtext('link') or '')[:160])
-except Exception as e:
-    print('PARSE_FAILED',type(e).__name__,str(e)[:120])
-PY
+          for url in 'https://www.taiwan.net.tw/rss.aspx?sno=0001001' 'https://www.tpedoit.gov.taipei/OpenData.aspx?SN=FFD154F901BB9155'; do
+            echo '=== RSS source ==='
+            echo "$url"
+            curl --silent --show-error --location --max-time 20 --output /tmp/p5feed \
+              --write-out 'HTTP:%{http_code} TYPE:%{content_type} FINAL:%{url_effective} BYTES:%{size_download}\n' "$url" || true
+            python3 -c "import xml.etree.ElementTree as ET; root=ET.parse('/tmp/p5feed').getroot(); items=list(root.iter('item')); print('XML_ROOT:',root.tag,'ITEM_COUNT:',len(items)); print('FIRST_TITLE:',[(x.findtext('title') or '')[:120] for x in items[:2]])" || true
           done
