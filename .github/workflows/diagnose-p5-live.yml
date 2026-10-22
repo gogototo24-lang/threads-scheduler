@@ -32,3 +32,17 @@ jobs:
               --write-out 'HTTP:%{http_code} TYPE:%{content_type} FINAL:%{url_effective} BYTES:%{size_download}\n' "$url" || true
             python3 -c "import xml.etree.ElementTree as ET; root=ET.parse('/tmp/p5feed').getroot(); items=list(root.iter('item')); print('XML_ROOT:',root.tag,'ITEM_COUNT:',len(items)); [(print('ITEM',i,'DATE',((x.findtext('pubDate') or x.findtext('updated') or '')[:90]),'LINK',((x.findtext('link') or '')[:150]),'TITLE',((x.findtext('title') or '')[:115]))) for i,x in enumerate(items[:8])]" || true
           done
+
+      - name: Candidate official culture and puppetry sources (read only)
+        shell: bash
+        run: |
+          echo '=== Ministry of Culture RSS candidate ==='
+          curl --silent --show-error --location --max-time 20 --output /tmp/p5culture \
+            --write-out 'HTTP:%{http_code} TYPE:%{content_type} FINAL:%{url_effective} BYTES:%{size_download}\n' \
+            'https://www.moc.gov.tw/OpenData.aspx?SN=C4E4E3A8E687AD91' || true
+          python3 -c "import xml.etree.ElementTree as ET; root=ET.parse('/tmp/p5culture').getroot(); items=list(root.iter('item')); print('XML_ROOT:',root.tag,'ITEMS:',len(items)); [(print('DATE',x.findtext('pubDate'),'LINK',(x.findtext('link') or '')[:130],'TITLE',(x.findtext('title') or '')[:90])) for x in items[:5]]" || true
+          echo '=== PILI official homepage candidate ==='
+          curl --silent --show-error --location --max-time 20 --output /tmp/p5pili \
+            --write-out 'HTTP:%{http_code} TYPE:%{content_type} FINAL:%{url_effective} BYTES:%{size_download}\n' \
+            'https://www.pili.com.tw/' || true
+          python3 -c "from pathlib import Path; t=Path('/tmp/p5pili').read_text(errors='replace'); i=t.find('霹靂英雄戰紀'); print('HTML_BYTES',len(t),'TITLE_OFFSET',i); print(t[max(0,i-500):i+450].replace(chr(10),' ')[:950]); print('LATEST_TEXT',t.find('2026.10.'))" || true
