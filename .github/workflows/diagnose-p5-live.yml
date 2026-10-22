@@ -30,5 +30,5 @@ jobs:
             echo "$url"
             curl --silent --show-error --location --max-time 20 --output /tmp/p5feed \
               --write-out 'HTTP:%{http_code} TYPE:%{content_type} FINAL:%{url_effective} BYTES:%{size_download}\n' "$url" || true
-            python3 -c "import xml.etree.ElementTree as ET; root=ET.parse('/tmp/p5feed').getroot(); items=list(root.iter('item')); print('XML_ROOT:',root.tag,'ITEM_COUNT:',len(items)); print('FIRST_TITLE:',[(x.findtext('title') or '')[:120] for x in items[:2]])" || true
+            python3 -c "import xml.etree.ElementTree as ET; root=ET.parse('/tmp/p5feed').getroot(); items=list(root.iter('item')); print('XML_ROOT:',root.tag,'ITEM_COUNT:',len(items)); [(print('ITEM',i,'DATE',((x.findtext('pubDate') or x.findtext('updated') or '')[:90]),'LINK',((x.findtext('link') or '')[:150]),'TITLE',((x.findtext('title') or '')[:115]))) for i,x in enumerate(items[:8])]" || true
           done
