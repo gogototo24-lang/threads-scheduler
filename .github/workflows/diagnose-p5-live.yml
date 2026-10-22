@@ -52,3 +52,12 @@ jobs:
         run: |
           curl -fsSL --max-time 20 'https://www.pili.com.tw/news-browse.php' -o /tmp/pilinews || true
           python3 -c "from pathlib import Path; import re; t=Path('/tmp/pilinews').read_text(errors='replace'); a=re.findall(r'<a\\s+class=[\\\"\\\']ui_newsitem[\\\"\\\'][^>]*href=[\\\"\\\']([^\\\"\\\']+)',t,re.I); print('PILI_NEWS_LINKS:',a[:8]); p=t.find('ui_newsitem'); print('HTML_CONTEXT:',t[max(0,p-100):p+900].replace(chr(10),' ')[:1000])" || true
+
+      - name: Verify official PILI YouTube feed (read only)
+        shell: bash
+        run: |
+          echo '=== Official PILI YouTube RSS ==='
+          curl --silent --show-error --location --max-time 20 --output /tmp/p5youtube \
+            --write-out 'HTTP:%{http_code} TYPE:%{content_type} FINAL:%{url_effective} BYTES:%{size_download}\n' \
+            'https://www.youtube.com/feeds/videos.xml?channel_id=UCgXjKdruFuLXv9X2FK6_Q7w' || true
+          python3 -c "import xml.etree.ElementTree as ET; root=ET.parse('/tmp/p5youtube').getroot(); ns={'a':'http://www.w3.org/2005/Atom'}; xs=root.findall('a:entry',ns); print('RSS_ROOT:',root.tag,'ENTRIES:',len(xs)); [(print('PUBLISHED',x.findtext('a:published',namespaces=ns),'TITLE',(x.findtext('a:title',namespaces=ns) or '')[:120])) for x in xs[:4]]" || true
