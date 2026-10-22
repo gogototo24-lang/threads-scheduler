@@ -1,4 +1,4 @@
-name: Diagnose P5 Production Read Only
+name: Diagnose P5 Live Read Only
 
 on:
   push:
@@ -10,54 +10,28 @@ permissions:
   contents: read
 
 jobs:
-  inspect:
+  production-observability:
     runs-on: ubuntu-latest
     steps:
-      - name: Public Cloudflare status (no authorization)
+      - name: Fetch real Cloudflare native scout and new trend-radar status
         shell: bash
         run: |
-          echo '=== P5 official scout public status ==='
-          curl -fsSL --max-time 18 'https://threads-scheduler.gogototo24.workers.dev/api/factory/p5/official-scout/public' || true
-          echo
-          echo '=== P5 public status ==='
-          curl -fsSL --max-time 18 'https://threads-scheduler.gogototo24.workers.dev/api/factory/p5/status' || true
-          echo
-      - name: Verify government RSS endpoints without posting
-        shell: bash
-        run: |
-          for url in 'https://www.taiwan.net.tw/rss.aspx?sno=0001001' 'https://www.tpedoit.gov.taipei/OpenData.aspx?SN=FFD154F901BB9155'; do
-            echo '=== RSS source ==='
-            echo "$url"
-            curl --silent --show-error --location --max-time 20 --output /tmp/p5feed \
-              --write-out 'HTTP:%{http_code} TYPE:%{content_type} FINAL:%{url_effective} BYTES:%{size_download}\n' "$url" || true
-            python3 -c "import xml.etree.ElementTree as ET; root=ET.parse('/tmp/p5feed').getroot(); items=list(root.iter('item')); print('XML_ROOT:',root.tag,'ITEM_COUNT:',len(items)); [(print('ITEM',i,'DATE',((x.findtext('pubDate') or x.findtext('updated') or '')[:90]),'LINK',((x.findtext('link') or '')[:150]),'TITLE',((x.findtext('title') or '')[:115]))) for i,x in enumerate(items[:8])]" || true
+          set -euo pipefail
+          for endpoint in \
+            '/api/factory/p5/official-scout/public' \
+            '/api/factory/p5/trends/public' \
+            '/api/factory/p5/status'; do
+            echo "=== P5 LIVE $endpoint ==="
+            curl --fail --silent --show-error --max-time 20 \
+              "https://threads-scheduler.gogototo24.workers.dev$endpoint" \
+              | python3 -m json.tool | head -c 9000
+            echo
           done
-
-      - name: Candidate official culture and puppetry sources (read only)
+      - name: Read-only Google Taiwan Trends RSS source
         shell: bash
         run: |
-          echo '=== Ministry of Culture RSS candidate ==='
-          curl --silent --show-error --location --max-time 20 --output /tmp/p5culture \
-            --write-out 'HTTP:%{http_code} TYPE:%{content_type} FINAL:%{url_effective} BYTES:%{size_download}\n' \
-            'https://www.moc.gov.tw/OpenData.aspx?SN=C4E4E3A8E687AD91' || true
-          python3 -c "import xml.etree.ElementTree as ET; root=ET.parse('/tmp/p5culture').getroot(); items=list(root.iter('item')); print('XML_ROOT:',root.tag,'ITEMS:',len(items)); [(print('DATE',x.findtext('pubDate'),'LINK',(x.findtext('link') or '')[:130],'TITLE',(x.findtext('title') or '')[:90])) for x in items[:5]]" || true
-          echo '=== PILI official homepage candidate ==='
-          curl --silent --show-error --location --max-time 20 --output /tmp/p5pili \
-            --write-out 'HTTP:%{http_code} TYPE:%{content_type} FINAL:%{url_effective} BYTES:%{size_download}\n' \
-            'https://www.pili.com.tw/' || true
-          python3 -c "from pathlib import Path; t=Path('/tmp/p5pili').read_text(errors='replace'); i=t.find('霹靂英雄戰紀'); print('HTML_BYTES',len(t),'TITLE_OFFSET',i); print(t[max(0,i-500):i+450].replace(chr(10),' ')[:950]); print('LATEST_TEXT',t.find('2026.10.')); k=t.find('2026.10.'); print('PILI_NEWS_CONTEXT',t[max(0,k-1500):k+900].replace(chr(10),' ')[:2400])" || true
-
-      - name: Validate PILI news browse markup (read only)
-        shell: bash
-        run: |
-          curl -fsSL --max-time 20 'https://www.pili.com.tw/news-browse.php' -o /tmp/pilinews || true
-          python3 -c "from pathlib import Path; import re; t=Path('/tmp/pilinews').read_text(errors='replace'); a=re.findall(r'<a\\s+class=[\\\"\\\']ui_newsitem[\\\"\\\'][^>]*href=[\\\"\\\']([^\\\"\\\']+)',t,re.I); print('PILI_NEWS_LINKS:',a[:8]); p=t.find('ui_newsitem'); print('HTML_CONTEXT:',t[max(0,p-100):p+900].replace(chr(10),' ')[:1000])" || true
-
-      - name: Verify official PILI YouTube feed (read only)
-        shell: bash
-        run: |
-          echo '=== Official PILI YouTube RSS ==='
-          curl --silent --show-error --location --max-time 20 --output /tmp/p5youtube \
-            --write-out 'HTTP:%{http_code} TYPE:%{content_type} FINAL:%{url_effective} BYTES:%{size_download}\n' \
-            'https://www.youtube.com/feeds/videos.xml?channel_id=UCgXjKdruFuLXv9X2FK6_Q7w' || true
-          python3 -c "import xml.etree.ElementTree as ET; root=ET.parse('/tmp/p5youtube').getroot(); ns={'a':'http://www.w3.org/2005/Atom'}; xs=root.findall('a:entry',ns); print('RSS_ROOT:',root.tag,'ENTRIES:',len(xs)); [(print('PUBLISHED',x.findtext('a:published',namespaces=ns),'TITLE',(x.findtext('a:title',namespaces=ns) or '')[:120])) for x in xs[:4]]" || true
+          curl --silent --show-error --location --max-time 20 \
+            --output /tmp/trends.xml \
+            --write-out 'HTTP:%{http_code} CONTENT_TYPE:%{content_type} BYTES:%{size_download}\n' \
+            'https://trends.google.com/trending/rss?geo=TW'
+          python3 -c "import xml.etree.ElementTree as ET;r=ET.parse('/tmp/trends.xml').getroot();xs=list(r.iter('item'));print('GOOGLE_TW_TRENDS_COUNT',len(xs));[(print('QUERY',x.findtext('title'),'TIME',x.findtext('pubDate'))) for x in xs[:3]]"
