@@ -47,7 +47,7 @@ function validate(input) {
     .map(v=>String(v).trim()).filter(Boolean).slice(0,25).map(safeUrl);
   if(pipeline==='A'&&!firstFrame)throw Error('A 線必須指定已核准 Master 首幀 HTTPS URL');
   if(pipeline==='C'&&!clipUrls.length)throw Error('C 線必須指定已授權既有影片 URLs');
-  const monthlyBudget=Number(input.monthly_budget_twd ?? 0);
+  const monthlyBudget=Number(input.monthly_budget_twd ?? input.month_budget_twd ?? 0);
   const estimate=Number(input.estimated_run_twd ?? 0);
   if(!Number.isFinite(monthlyBudget)||monthlyBudget<0||monthlyBudget>30000||
      !Number.isFinite(estimate)||estimate<0||estimate>100)
