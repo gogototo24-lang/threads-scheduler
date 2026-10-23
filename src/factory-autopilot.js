@@ -162,13 +162,9 @@ export async function runAutopilot(env,date=new Date()) {
   let started=0,blocked=0,skipped=0;
   for(const row of series){
     const s=parseSettings(row.settings_json);
-    if(!s.enabled||current.hhmm<s.schedule_time||current.hhmm>s.schedule_time.substring(0,3)+
-       String(Math.min(59,Number(s.schedule_time.slice(3))+19)).padStart(2,'0')) {
-      // Simpler reliable window below handles crossing the hour.
-      const [h,m]=s.schedule_time.split(':').map(Number),[ch,cm]=current.hhmm.split(':').map(Number);
-      const delta=(ch*60+cm)-(h*60+m);
-      if(delta<0||delta>19){skipped++;continue;}
-    }
+    const [h,m]=s.schedule_time.split(':').map(Number),[ch,cm]=current.hhmm.split(':').map(Number);
+    const delta=(ch*60+cm)-(h*60+m);
+    if(delta<0||delta>19){skipped++;continue;}
     const runId=s.series_id+':'+current.day;
     if(s.pipeline==='A'&&!enabled(env.CATPAW_AUTOPILOT_PAID_ENABLED)){blocked++;continue;}
     if(s.pipeline==='A'){
@@ -262,7 +258,7 @@ export async function reconcileAutopilot(env) {
   return {enabled:true,ready,queued,published,needs_attention:needsAttention};
 }
 export function autopilotUi() {
-  return new Response(\`<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  return new Response(`<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CatPaw Autopilot 系列總控</title>
 <style>body{font-family:system-ui,sans-serif;background:#101722;color:#f1f4f9;margin:0;padding:18px;max-width:850px;margin:auto}
 h1{font-size:23px}.muted{color:#9fb2c8}label{display:block;margin:12px 0 4px}
@@ -308,6 +304,6 @@ d.clip_urls=String(d.clip_urls||'').split('\\n').filter(Boolean);
 d.topic_bank=String(d.topic_bank||'').split('\\n').filter(Boolean);
 const r=await fetch('/api/factory/autopilot/series',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(d)});
 msg.textContent=JSON.stringify(await r.json());refresh();});refresh();
-</script></html>\`,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store',
+</script></html>`,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store',
     'content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'" }});
 }
