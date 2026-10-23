@@ -61,6 +61,11 @@ COUNCIL_ANTHROPIC_MAX_TOKENS = "5000"
 COUNCIL_META_MODEL = "muse-spark-1.3"
 
 # CatPaw AI Factory P3 control plane
+# CatPaw Autopilot video series, separate from the already live P5 text autoposter.
+# No series ships pre-enabled. Admin config at /autopilot.
+# Paid RunningHub provider and Threads video auto-publish are independent explicit gates.
+CATPAW_AUTOPILOT_ENABLED = "true"
+CATPAW_AUTOPILOT_PAID_ENABLED = "false"
 FACTORY_P3_ENABLED = "true"
 FACTORY_P3_MAX_RETRIES = "2"
 AI_MUSIC_STUDIO_URL = "https://ai-music-studio-v2.onrender.com"
