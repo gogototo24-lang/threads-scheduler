@@ -1,0 +1,40 @@
+name: Validate P5 REAL Trending Auto Publish
+
+on:
+  pull_request:
+    paths:
+      - "src/p5-trends-autopost.js"
+      - "src/ai-worker.js"
+      - "src/p5-fastlane.js"
+      - "tests/p5-trends-autopost.test.mjs"
+      - "migrations/0015_p5_trend_autopost.sql"
+      - "wrangler.toml"
+      - ".github/workflows/validate-p5-trends-autopost.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/p5-trends-autopost.js"
+      - "tests/p5-trends-autopost.test.mjs"
+      - ".github/workflows/validate-p5-trends-autopost.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Syntax check
+        run: node --check src/p5-trends-autopost.js
+      - name: Real-publishing guards and cron idempotency
+        run: node --test tests/p5-trends-autopost.test.mjs tests/p5-fastlane.test.mjs
+      - name: Validate Cloudflare build
+        run: |
+          npm ci
+          npx wrangler deploy --dry-run --outdir /tmp/p5-auto-dry-run
