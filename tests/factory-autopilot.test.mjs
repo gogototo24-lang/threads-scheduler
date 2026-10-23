@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildAutopilotPlan, autopilotUi, autopilotPublic,
+  buildAutopilotPlan, archiveAutopilotVideo, autopilotUi, autopilotPublic,
   autopilotUpsert, runAutopilot, reconcileAutopilot
 } from '../src/factory-autopilot.js';
 
@@ -90,4 +90,24 @@ test('public view exposes no paid secret and mobile admin page has safety toggle
  assert.match(html,/Master/);
  assert.match(html,/autopublish/);
  assert.match(html,/monthly_budget_twd/);
+});
+
+test('video export uses real non-expiring R2 URL, not provider signed URL',async()=>{
+  let uploaded=null;
+  const env={PUBLIC_BASE_URL:'https://threads-scheduler.gogototo24.workers.dev',
+    MEDIA:{async put(key,bytes,meta){uploaded={key,bytes,meta};}}};
+  const data=new Uint8Array(20);data.set([0,0,0,20,102,116,121,112,105,115,111,109]);
+  const media=await archiveAutopilotVideo(env,'demo:2026-10-24',
+    'https://cdn.example.com/generated.mp4',
+    async()=>new Response(data,{status:200,headers:{'content-type':'video/mp4'}}));
+  assert.equal(media.bytes,20);
+  assert.match(media.media_url,/^https:\/\/threads-scheduler\.gogototo24\.workers\.dev\/media\//);
+  assert.equal(uploaded.meta.httpMetadata.contentType,'video/mp4');
+});
+test('video exporter blocks corrupt MP4 and unbounded large video',async()=>{
+  const env={PUBLIC_BASE_URL:'https://threads-scheduler.gogototo24.workers.dev',MEDIA:{async put(){throw Error('should not write');}}};
+  await assert.rejects(()=>archiveAutopilotVideo(env,'test:2026-10-24','https://cdn.example.com/x.mp4',
+    async()=>new Response(new Uint8Array(24),{status:200})),/ftyp/);
+  await assert.rejects(()=>archiveAutopilotVideo(env,'test:2026-10-24','https://cdn.example.com/x.mp4',
+    async()=>new Response(new Uint8Array(24),{status:200,headers:{'content-length':'26214401'}})),/25MB/);
 });
