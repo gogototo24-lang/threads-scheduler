@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {trendSuitability,buildTrendSubmission,runTrendAutoPublisher,publicTrendAutoPublisher} from '../src/p5-trends-autopost.js';
+import {trendSuitability,buildTrendSubmission,runTrendAutoPublisher,publicTrendAutoPublisher,reconcileTrendPublishes} from '../src/p5-trends-autopost.js';
 import {validateFastLaneSubmission} from '../src/p5-fastlane.js';
 
 const NOW=Date.now(),G='https://trends.google.com/trending?geo=TW&hl=zh-TW';
@@ -47,7 +47,7 @@ test('blocks insensitive stale, political, scandal, and unverifiable signals',()
  ])assert.equal(trendSuitability({...x,...change},NOW).reason,reason,JSON.stringify(change));
 });
 function store(initial) {
- const trends=initial.map(x=>({...x})),runs=new Map();
+ const trends=initial.map(x=>({...x})),runs=new Map(),actions=new Map();
  const env={FACTORY_P5_TREND_AUTOPOST_ENABLED:'true',FACTORY_P5_AUTO_SEND:'true',
   FACTORY_P5_ALLOW_EXTERNAL_PUBLISH:'true',DB:{
    prepare(sql){let args=[];return {
@@ -57,9 +57,17 @@ function store(initial) {
       if(runs.has(args[0]))return {meta:{changes:0}};
       runs.set(args[0],{slot:args[0],status:'started',started_at:args[1],published:0,attempted:0});return {meta:{changes:1}};
      }
+     if(sql.startsWith("UPDATE p5_trend_autopost_runs SET status='published'")){
+      const record=runs.get(args[2]);record.status='published';record.published=1;
+      record.last_permalink=args[0];record.detail=args[1];return {meta:{changes:1}};
+     }
      if(sql.startsWith('UPDATE p5_trend_autopost_runs SET')){
       Object.assign(runs.get(args[9]),{status:args[0],eligible:args[1],attempted:args[2],published:args[3],
        last_trend_id:args[4],last_action_id:args[5],last_permalink:args[6],detail:args[7],finished_at:args[8]});
+      return {meta:{changes:1}};
+     }
+     if(sql.startsWith("UPDATE p5_search_trends SET status='published'")){
+      const item=trends.find(x=>x.trend_id===args[0]);item.status='published';
       return {meta:{changes:1}};
      }
      if(sql.startsWith('UPDATE p5_search_trends SET status=')){
@@ -68,6 +76,7 @@ function store(initial) {
      throw Error('UNHANDLED RUN '+sql);
     },
     async first(){
+     if(sql.includes('FROM social_actions WHERE id=?'))return actions.get(args[0])||null;
      if(sql.includes('COUNT(*) AS n FROM p5_trend_autopost_runs')){
       const n=[...runs.values()].filter(x=>x.status==='published'&&x.started_at>=args[0]).length;
       return {n};
@@ -78,6 +87,9 @@ function store(initial) {
      throw Error('UNHANDLED FIRST '+sql);
     },
     async all(){
+     if(sql.includes('FROM p5_trend_autopost_runs')&&sql.includes('last_action_id')){
+      return {results:[...runs.values()].filter(x=>['sending','queued','not_confirmed','publish_unknown','blocked_auth'].includes(x.status)&&x.last_action_id&&x.started_at>=args[0]).map(x=>({slot:x.slot,last_action_id:x.last_action_id,last_trend_id:x.last_trend_id}))};
+     }
      if(sql.includes('FROM p5_search_trends')){
       return {results:trends.filter(x=>x.status==='discovered'&&x.last_seen_at>=args[0]&&x.published_at>=args[1])
        .sort((a,b)=>b.traffic_lower_bound-a.traffic_lower_bound).slice(0,50)};
@@ -86,7 +98,7 @@ function store(initial) {
     }
    }}
   }};
- return {env,trends,runs};
+ return {env,trends,runs,actions};
 }
 test('ten-minute Cron publishes REAL eligible candidate, stores post ID, never duplicates',async()=>{
  const s=store([row('舒華'),row('柯文哲',{traffic_lower_bound:90000})]);
@@ -127,4 +139,27 @@ test('no auto publishing when disabled, and empty candidate produces no claim of
  assert.equal((await runTrendAutoPublisher({...s.env,FACTORY_P5_AUTO_SEND:'false'})).reason,'publish_gate_closed');
  const a=await runTrendAutoPublisher(s.env,NOW);
  assert.equal(a.status,'no_eligible');assert.equal(a.published,0);assert.equal(a.attempted,0);
+});
+
+test('async official Threads success reconciles sending, updates D1 and enforces two-hour post cap',async()=>{
+ const s=store([row('舒華'),row('霹靂布袋戲',{category_hint:'puppetry',traffic_lower_bound:15000})]);
+ let calls=0;
+ const send=async()=>{calls++;return {status:'sending',published:false,action_id:'p5fast-concurrent'};};
+ const pending=await runTrendAutoPublisher(s.env,NOW,send);
+ assert.equal(pending.status,'sending');
+ assert.equal(pending.published,0);
+ assert.equal(s.trends[0].status,'verified');
+ s.actions.set('p5fast-concurrent',{status:'sent',external_thread_id:'18079739522397300',
+  permalink:'https://www.threads.com/@water3838/post/De0elz6iNNN'});
+ const next=await runTrendAutoPublisher(s.env,NOW+600000,send);
+ assert.equal(next.status,'rate_limited');
+ const prior=s.runs.get(pending.slot);
+ assert.equal(prior.status,'published');
+ assert.equal(prior.published,1);
+ assert.equal(prior.last_permalink,'https://www.threads.com/@water3838/post/De0elz6iNNN');
+ assert.equal(s.trends[0].status,'published');
+ assert.equal(calls,1,'must not publish a second post before two-hour spacing');
+ assert.equal((await reconcileTrendPublishes(s.env,NOW+600000)).confirmed,0,'idempotent reconciliation');
+ const state=await publicTrendAutoPublisher(s.env);
+ assert.equal(state.last24h.published,1);
 });
