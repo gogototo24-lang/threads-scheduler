@@ -1,6 +1,6 @@
 // P5 scoped fast lane. Does not expose ADMIN_KEY or the Threads OAuth token.
 // POST remains secret-authenticated by scoutGuarded in ai-worker.js.
-const SAFE_CATEGORY = new Set(['entertainment','culture','cats','puppetry','lifestyle','technology','tourism','transport','music']);
+const SAFE_CATEGORY = new Set(['entertainment','culture','cats','puppetry','lifestyle','technology','tourism','transport','music','sports']);
 const PUBLIC_API = '/api/factory/p5/fastlane';
 const BLOCKED = /選舉|罷免|投票|政黨|候選人|政治|兩岸|戰爭|詐騙|死亡|傷亡|醫療建議|仇恨|性侵|裸露|私訊/i;
 
