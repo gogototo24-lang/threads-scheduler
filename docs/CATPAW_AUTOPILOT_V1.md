@@ -24,7 +24,8 @@ P3 provider task / 技術 QA / 非 Mock HTTPS 影片檢查
    ↓
 影片 ready
    ├─ 若未同時開啟系列 autopublish 與 FACTORY_PUBLISH_ENABLED → 停在 ready
-   └─ 若均明確開啟 → 建立既有 posts(VIDEO) 排程記錄（不直接重複呼叫 Meta）
+   └─ 若均明確開啟 → 串流驗證真實 MP4（最大25MB）→ 複製至既有 Cloudflare R2 MEDIA
+       → 建立 posts(VIDEO) 排程記錄（Meta 取用穩定公開 URL）
        ↓
       舊有 Threads VIDEO publisher → 建立容器 → Poll FINISHED → publish
        ↓
@@ -83,7 +84,7 @@ P3 provider task / 技術 QA / 非 Mock HTTPS 影片檢查
 - 只允許 A/C 線，D 線涉及 Shot 02/03 使用前鏡**真正尾幀**的串接，未達驗收前拒絕導入。B 線不涉及影片發布。
 - 需有真實角色 `character_id`、CANON 已核准 Master，禁止依模糊文字替代真實參考圖。
 - D1 使用 `series_id:local_day` 去重，避免相同日期多次建立付費生成任務。估算成本**不等於 GPU 實際帳單**；記帳需與 P3 provider 最終資料對帳。
-- 影片素材由既有 P3 技術 QA 檢查；若 Meta 無法公開讀取影片 URL，Threads VIDEO 會失敗／進入需處理狀態。
+- 影片素材由既有 P3 技術 QA 檢查，發布前將 MP4 檢查 ftyp 及 25MB 上限後複製進 R2 MEDIA，避免提供短效簽名 URL；若 Meta 仍無法讀取，Threads VIDEO 會失敗／進入需處理狀態。
 - 不使用 TinyFish、不呼叫 Metricool、不在 GitHub 或 n8n workflow 保存管理密鑰。
 
 ## AITuber 對照與目前尚未接線之處
