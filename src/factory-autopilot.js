@@ -198,6 +198,44 @@ export async function runAutopilot(env,date=new Date()) {
   }
   return {enabled:true,started,blocked,skipped};
 }
+// Rehost completed MP4 in the existing R2 MEDIA bucket before Threads sees it.
+// Provider signed download URLs may expire before Meta finishes transcoding.
+export async function archiveAutopilotVideo(env,runId,remoteUrl,fetcher=fetch) {
+  if(!env.MEDIA||!HTTPS.test(String(env.PUBLIC_BASE_URL||'')))
+    throw Error('R2 MEDIA 或公開 Worker URL 尚未配置');
+  const u=safeUrl(remoteUrl);
+  const response=await fetcher(u,{method:'GET',redirect:'follow',
+    signal:AbortSignal.timeout(45000)});
+  if(!response.ok||!response.body)throw Error('成片來源無法公開下載 HTTP '+response.status);
+  const target=new URL(response.url||u);
+  if(target.protocol!=='https:')throw Error('成片下載被重新導向非 HTTPS');
+  const max=25*1024*1024;
+  const declared=Number(response.headers.get('content-length')||0);
+  if(declared>max)throw Error('成片超過 Threads VIDEO 25MB 上限');
+  const chunks=[];let size=0;
+  const reader=response.body.getReader();
+  try{
+    while(true){
+      const next=await reader.read();
+      if(next.done)break;
+      size+=next.value.length;
+      if(size>max)throw Error('成片實際超過 25MB 上限');
+      chunks.push(next.value);
+    }
+  }catch(e){await reader.cancel().catch(()=>{});throw e;}
+  if(size<12)throw Error('成片內容過短，不是有效 MP4');
+  const bytes=new Uint8Array(size);let offset=0;
+  for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+  if(new TextDecoder().decode(bytes.slice(4,8))!=='ftyp')
+    throw Error('成片不是 ftyp MP4 容器');
+  const key='autopilot/'+runId.replace(/[^a-z0-9_:-]/gi,'_')+'.mp4';
+  await env.MEDIA.put(key,bytes,{
+    httpMetadata:{contentType:'video/mp4',cacheControl:'public, max-age=86400'}
+  });
+  return {media_key:key,media_url:String(env.PUBLIC_BASE_URL).replace(/\/$/,'')+
+    '/media/'+encodeURIComponent(key),bytes:size};
+}
+
 export async function reconcileAutopilot(env) {
   if(!enabled(env.CATPAW_AUTOPILOT_ENABLED))return {enabled:false};
   const rows=(await env.DB.prepare(
@@ -245,9 +283,10 @@ export async function reconcileAutopilot(env) {
       const postId=crypto.randomUUID();
       const caption=(s.title+'｜'+r.topic+'\n'+(s.caption_prefix||'')+
         '\n'+(s.universe.includes('貓掌')?'#貓掌江湖 #布袋戲':'#喵台灣 #台灣')).slice(0,MAX_CAPTION);
+      const media=await archiveAutopilotVideo(env,r.id,r.video_url);
       await env.DB.prepare(
-        "INSERT INTO posts(id,text,media_type,media_key,media_url,scheduled_at,status) VALUES (?,?,'VIDEO',NULL,?,?,'scheduled')"
-      ).bind(postId,caption,r.video_url,stamp()).run();
+        "INSERT INTO posts(id,text,media_type,media_key,media_url,scheduled_at,status) VALUES (?,?,'VIDEO',?,?,?,'scheduled')"
+      ).bind(postId,caption,media.media_key,media.media_url,stamp()).run();
       await updateRun(env,r.id,'queued_to_publish',{post_id:postId});
       queued++;
     }catch(e){
