@@ -48,7 +48,9 @@ jobs:
             echo "NO_EXISTING_CLOUDFLARE_TOKEN"
             exit 0
           fi
-          npm ci --silent
-          npx wrangler d1 execute threads-scheduler-db --remote \
-            --command="SELECT id,status,external_thread_id,permalink,sent_at,substr(error,1,180) AS error FROM social_actions WHERE id=(SELECT last_action_id FROM p5_trend_autopost_runs ORDER BY slot DESC LIMIT 1)" \
-            --json
+          curl --fail-with-body --silent --show-error --max-time 22 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"sql":"SELECT id,status,external_thread_id,permalink,sent_at,substr(error,1,180) AS error FROM social_actions WHERE id=(SELECT last_action_id FROM p5_trend_autopost_runs ORDER BY slot DESC LIMIT 1)"}' \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/b466efec-10b0-4e6e-9ea9-7f174946fdb4/query" \
+            | python3 -m json.tool
