@@ -146,7 +146,13 @@ async function runningHubStart(env, job, draft, image) {
     throw new Error(`RunningHub node map 缺少必要綁定：${missingBindings.join(', ')}`);
   }
 
-  const duration = Number(env.RUNNINGHUB_VIDEO_DURATION || 5);
+  const duration = Number(job?.duration_seconds ?? env.RUNNINGHUB_VIDEO_DURATION ?? 5);
+  if (!Number.isInteger(duration) || ![5, 10, 15].includes(duration)) {
+    throw new Error('RunningHub duration must be 5, 10, or 15 seconds');
+  }
+  if (duration === 15 && env.RUNNINGHUB_15S_VERIFIED !== 'true') {
+    throw new Error('RunningHub 15s not verified; set RUNNINGHUB_15S_VERIFIED only after testing WebApp duration node');
+  }
   const aspectRatio = String(env.RUNNINGHUB_VIDEO_ASPECT_RATIO || '').trim();
   if (!aspectRatio) throw new Error('RUNNINGHUB_VIDEO_ASPECT_RATIO 未設定');
   const prompt = job.input_prompt || draft?.visual_prompt || '';
