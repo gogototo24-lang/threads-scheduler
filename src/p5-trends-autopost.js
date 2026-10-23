@@ -71,6 +71,34 @@ export function buildTrendSubmission(row,now=Date.now()) {
   review_required:false
  };
 }
+// Another overlapping Worker invocation may claim the publication job first.
+// The fastlane response can temporarily say "sending" even when the official
+// Threads API subsequently succeeds. Reconcile D1 before quota checks so
+// confirmed posts count, stay idempotent and display real permalinks.
+export async function reconcileTrendPublishes(env,now=Date.now()){
+ const previous=(await env.DB.prepare(
+  "SELECT slot,last_action_id,last_trend_id FROM p5_trend_autopost_runs "+
+  "WHERE status IN ('sending','queued','not_confirmed','publish_unknown','blocked_auth') "+
+  "AND last_action_id IS NOT NULL AND started_at>=? ORDER BY slot DESC LIMIT 20"
+ ).bind(new Date(now-2*DAY).toISOString()).all()).results||[];
+ let confirmed=0;
+ for(const run of previous){
+  const action=await env.DB.prepare(
+   "SELECT status,external_thread_id,permalink FROM social_actions WHERE id=?"
+  ).bind(run.last_action_id).first();
+  if(action?.status!=='sent'||!action.external_thread_id)continue;
+  await env.DB.prepare(
+   "UPDATE p5_trend_autopost_runs SET status='published',published=1,last_permalink=?,detail=? "+
+   "WHERE slot=? AND status!='published'"
+  ).bind(action.permalink||null,'confirmed_from_official_threads_action',run.slot).run();
+  if(run.last_trend_id){
+   await env.DB.prepare("UPDATE p5_search_trends SET status='published' WHERE trend_id=?")
+     .bind(run.last_trend_id).run();
+  }
+  confirmed++;
+ }
+ return {confirmed};
+}
 export async function runTrendAutoPublisher(env,now=Date.now(),publish=defaultPublish) {
  if(String(env.FACTORY_P5_TREND_AUTOPOST_ENABLED||'').toLowerCase()!=='true')
   return {enabled:false};
@@ -85,6 +113,7 @@ export async function runTrendAutoPublisher(env,now=Date.now(),publish=defaultPu
  const out={enabled:true,slot,status:'no_eligible',eligible:0,attempted:0,published:0,
   trend_id:null,action_id:null,permalink:null,detail:null};
  try {
+  await reconcileTrendPublishes(env,now);
   // Only actual confirmed 'published' events count. Avoid content bursts.
   const dayCount=Number((await env.DB.prepare(
    "SELECT COUNT(*) AS n FROM p5_trend_autopost_runs WHERE status='published' AND started_at>=?"
