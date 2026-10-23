@@ -74,6 +74,8 @@ function validate(input) {
     enabled:enabled(input.enabled)
   };
   // Consent flags must be bound to the exact master/clip bank, not inferred.
+  if(s.enabled && s.pipeline==='A' && s.universe.includes('貓掌') && !s.character_id)
+    throw Error('貓掌江湖 A 線啟用時必須指定正史 character_id');
   if(s.enabled && !s.master_approved)throw Error('先確認 Master 圖／人物正史已核准才能啟用');
   if(s.enabled && !s.media_rights_approved)throw Error('先確認參考圖／片段可合法使用才能啟用');
   if(s.enabled && pipeline==='A' && !s.cost_approved)
@@ -309,13 +311,13 @@ article{border:1px solid #34465b;padding:13px;margin:12px 0;border-radius:9px;wh
 <h1>🐾 CatPaw Autopilot｜影片自動產線</h1>
 <p class="muted">台灣時間每天自動挑選原創題材，交由既有 P3 RunningHub／Editor 產生影片。成本、角色核准與發文另有獨立閘門；此頁需登入管理員。</p>
 <form id="f"><label>系列 ID</label><input name="series_id" value="catpaw-martial-a" required>
-<label>系列名稱</label><input name="title" value="貓掌江湖・每日極武" required>
+<label>系列名稱</label><input name="title" value="貓掌江湖・月扇影喵極武" required>
 <label>產線／影片類型</label><select name="pipeline"><option value="A">A：RunningHub H3 單鏡 5 秒</option><option value="C">C：用既有合法影片剪輯 30 秒</option></select>
 <label>每天時間（台北）</label><input name="schedule_time" type="time" value="05:50">
-<label>主題／劇本素材庫（一行一則，自動輪替）</label><textarea name="topic_bank">雲海之上的最後一道金色掌印，山門重啟
-無聲雨夜，黑色折扇定住時間
-十三面戰鼓停止，第十四鼓的影子出現</textarea>
-<label>角色 ID</label><input name="character_id" placeholder="MZ_003">
+<label>主題／劇本素材庫（一行一則，自動輪替）</label><textarea name="topic_bank">雨夜古城，月扇影喵以唯一黑色折扇定住滿天雨滴
+影月宮深夜，月扇影喵展開黑扇，千道銀紫扇影逆流
+龍門石階，月扇影喵持黑扇以影幕封魂破開結界</textarea>
+<label>角色 ID</label><input name="character_id" value="MZ_001" placeholder="MZ_001">
 <label>已核准首幀 URL（A 線必填）</label><input name="first_frame_url" placeholder="https://...">
 <label>已授權影片 URL（一行一個，C 線必填）</label><textarea name="clip_urls" placeholder="https://...mp4"></textarea>
 <label>音樂 URL（C 線選填）</label><input name="music_url" placeholder="https://...">
