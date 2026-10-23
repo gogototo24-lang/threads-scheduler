@@ -20,6 +20,7 @@ jobs:
           for endpoint in \
             '/api/factory/p5/official-scout/public' \
             '/api/factory/p5/trends/public' \
+            '/api/factory/p5/trends/autopost/public' \
             '/api/factory/p5/status'; do
             echo "=== P5 LIVE $endpoint ==="
             curl --fail --silent --show-error --max-time 20 \
