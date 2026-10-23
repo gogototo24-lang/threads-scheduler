@@ -36,3 +36,19 @@ jobs:
             --write-out 'HTTP:%{http_code} CONTENT_TYPE:%{content_type} BYTES:%{size_download}\n' \
             'https://trends.google.com/trending/rss?geo=TW'
           python3 -c "import xml.etree.ElementTree as ET;r=ET.parse('/tmp/trends.xml').getroot();xs=list(r.iter('item'));print('GOOGLE_TW_TRENDS_COUNT',len(xs));[(print('QUERY',x.findtext('title'),'TIME',x.findtext('pubDate'))) for x in xs[:3]]"
+
+      - name: Read actual Threads publish action from D1 (read only)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: "114801b2a23dcd8906ce0b087922f8c9"
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "NO_EXISTING_CLOUDFLARE_TOKEN"
+            exit 0
+          fi
+          npm ci --silent
+          npx wrangler d1 execute threads-scheduler-db --remote \
+            --command="SELECT id,status,external_thread_id,permalink,sent_at,substr(error,1,180) AS error FROM social_actions WHERE id=(SELECT last_action_id FROM p5_trend_autopost_runs ORDER BY slot DESC LIMIT 1)" \
+            --json
