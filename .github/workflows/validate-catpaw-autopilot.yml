@@ -1,0 +1,35 @@
+name: Validate CatPaw Native Autopilot
+on:
+  push:
+    paths:
+      - "src/factory-autopilot.js"
+      - "src/ai-worker.js"
+      - "tests/factory-autopilot.test.mjs"
+      - "migrations/0016_catpaw_autopilot.sql"
+      - ".github/workflows/validate-catpaw-autopilot.yml"
+  pull_request:
+    paths:
+      - "src/factory-autopilot.js"
+      - "src/ai-worker.js"
+      - "tests/factory-autopilot.test.mjs"
+      - "migrations/0016_catpaw_autopilot.sql"
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Source syntax
+        run: |
+          node --check src/factory-autopilot.js
+          node --check src/ai-worker.js
+      - name: Autopilot financial, canon and idempotency regression
+        run: node --test tests/factory-autopilot.test.mjs
+      - name: Existing P5 and Threads VIDEO regression
+        run: node --test tests/p5-official-autoscout.test.mjs tests/p5-fastlane.test.mjs tests/video-publishing.test.mjs
+      - name: Cloudflare worker dry-build only, no deploy
+        run: npx wrangler deploy --dry-run --outdir /tmp/catpaw-autopilot-preview
