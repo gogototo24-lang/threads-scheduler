@@ -1,5 +1,6 @@
 const TZ = 'Asia/Taipei';
 import legacy from './worker.js';
+import { autopilotUi,autopilotPublic,autopilotList,autopilotUpsert,runAutopilot,reconcileAutopilot } from './factory-autopilot.js';
 import { handleHqRequest } from './universe-hq.js';
 import { p5AuthPage,p5AuthStatus,issueScopedScoutKey,isScopedScoutKey } from './p5-auth.js';
 import { fastLaneHealth, fastLaneSubmit, fastLaneActionStatus } from './p5-fastlane.js';
@@ -15,6 +16,14 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname.startsWith('/api/factory/hq/')) return handleHqRequest(request, env);
+    if (url.pathname === '/autopilot' && request.method === 'GET')
+      return (await isAdmin(request,env)) ? autopilotUi() : redirect('/');
+    if (url.pathname === '/api/factory/autopilot/public' && request.method === 'GET')
+      return jsonCors(await autopilotPublic(env));
+    if (url.pathname === '/api/factory/autopilot/series' && request.method === 'GET')
+      return guarded(request,env,()=>autopilotList(env));
+    if (url.pathname === '/api/factory/autopilot/series' && request.method === 'POST')
+      return guarded(request,env,()=>autopilotUpsert(request,env));
     if (url.pathname === '/p5/authorize' && request.method === 'GET') {
       return await isAdmin(request,env) ? p5AuthPage() :
         new Response(null,{status:302,headers:{location:'/'}});
@@ -89,6 +98,10 @@ export default {
     ctx.waitUntil(runOfficialScout(env).catch(error => console.error('P5 official scout failed:', String(error))));
     ctx.waitUntil(runTaiwanTrendRadar(env).catch(error => console.error('P5 trend radar failed:', String(error))));
     ctx.waitUntil(runTrendAutoPublisher(env).catch(error => console.error('P5 trend auto publisher failed:', String(error))));
+    ctx.waitUntil((async () => {
+      await runAutopilot(env);
+      await reconcileAutopilot(env);
+    })().catch(error => console.error('CatPaw native autopilot failed:', String(error))));
     ctx.waitUntil((async () => {
       await legacy.scheduled(controller, env, ctx);
       const last = await setting(env, 'ai_last_scan');
