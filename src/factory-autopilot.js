@@ -74,6 +74,8 @@ function validate(input) {
     enabled:enabled(input.enabled)
   };
   // Consent flags must be bound to the exact master/clip bank, not inferred.
+  if(s.enabled && s.pipeline==='A' && s.universe.includes('貓掌') && !s.character_id)
+    throw Error('貓掌江湖 A 線啟用時必須指定正史 character_id');
   if(s.enabled && !s.master_approved)throw Error('先確認 Master 圖／人物正史已核准才能啟用');
   if(s.enabled && !s.media_rights_approved)throw Error('先確認參考圖／片段可合法使用才能啟用');
   if(s.enabled && pipeline==='A' && !s.cost_approved)
