@@ -1,0 +1,29 @@
+name: Verify deployed CatPaw Autopilot Read Only
+on:
+  push:
+    paths:
+      - ".github/workflows/verify-autopilot-live.yml"
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Public live API verification, no credentials, no posting
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --location --max-time 20 \
+            'https://threads-scheduler.gogototo24.workers.dev/api/factory/autopilot/public' > /tmp/live.json
+          python3 - <<'PY'
+          import json
+          v=json.load(open('/tmp/live.json'))
+          assert v['system']=='CatPaw Native Autopilot v1',v
+          assert v['enabled'] is True,v
+          assert isinstance(v['series_enabled'],int),v
+          assert 'publisher' in v,v
+          assert 'secret' not in json.dumps(v).lower(),v
+          print('DEPLOYED_AUTOPILOT_PUBLIC_OK')
+          print(json.dumps(v,ensure_ascii=False))
+          PY
+          echo '=== Admin page without session must not be publicly readable ==='
+          curl -s -o /dev/null -w 'HTTP_CODE:%{http_code}\n' \
+            --max-time 20 'https://threads-scheduler.gogototo24.workers.dev/autopilot'
