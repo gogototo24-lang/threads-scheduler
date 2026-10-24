@@ -32,7 +32,7 @@ export async function verifyOfficialSource(topic,fetcher=fetch,now=Date.now()){
  const publishedMs=Date.parse(published);
  if(!Number.isFinite(publishedMs)||publishedMs>now+300000||now-publishedMs>24*3600000)
   return {ok:false,reason:'publication_outside_24h'};
- const metadataDates=[...body.matchAll(/(?:article:published_time|datePublished|pubDate)[^>]{0,220}?(20\\d{2}-\\d{2}-\\d{2})/gi)].map(m=>m[1]);
+ const metadataDates=[...body.matchAll(/(?:article:published_time|datePublished|pubDate)[^>]{0,220}?(20\d{2}-\d{2}-\d{2})/gi)].map(m=>m[1]);
  if(!metadataDates.some(d=>Math.abs(Date.parse(d)-publishedMs)<24*3600000))
   return {ok:false,reason:'publication_date_not_corroborrated'};
  if(titleWords.length<8||!normalized(body).includes(titleWords))
