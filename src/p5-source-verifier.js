@@ -27,6 +27,11 @@ export async function verifyOfficialSource(topic,fetcher=fetch,now=Date.now()){
  }else body=(await response.text()).slice(0,250000);
  const normalized=s=>String(s).replace(/<[^>]+>/g,' ').replace(/\s+/g,'').toLowerCase();
  const titleWords=normalized(title);
+ const published=String(topic?.published_at||'');
+ if(!published)return {ok:false,reason:'publication_date_required'};
+ const publishedMs=Date.parse(published);
+ if(!Number.isFinite(publishedMs)||publishedMs>now+300000||now-publishedMs>24*3600000)
+  return {ok:false,reason:'publication_outside_24h'};
  if(titleWords.length<8||!normalized(body).includes(titleWords))
   return {ok:false,reason:'title_not_supported_by_source'};
  return {ok:true,source_url:url.href,verified_at:new Date(now).toISOString(),
