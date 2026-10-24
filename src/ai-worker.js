@@ -7,7 +7,6 @@ import { fastLaneHealth, fastLaneSubmit, fastLaneActionStatus } from './p5-fastl
 import { runOfficialScout, officialScoutStatus, publicOfficialScoutStatus } from './p5-official-autoscout.js';
 import {runTaiwanTrendRadar,publicTaiwanTrendRadar} from './p5-trend-radar.js';
 import {runTrendAutoPublisher,publicTrendAutoPublisher} from './p5-trends-autopost.js';
-import {prepareOriginalCandidate} from './p5-original-pipeline.js';
 import { generateImage, startVideo, pollVideo, providers, searchTrends, generateDrafts } from './ai-engine.js';
 import { factoryP3Status, factoryP3Create, factoryP3Get, factoryP3List, factoryP3Retry, processFactoryP3 } from './factory-p3.js';
 import { factoryP4Status, factoryP4Create, factoryP4Get, factoryP4List, processFactoryP4 } from './factory-p4.js';
@@ -18,16 +17,8 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/api/factory/p5/original/prepare' && request.method === 'POST') {
       if (!(await isAdmin(request,env))) return new Response(JSON.stringify({error:'unauthorized'}),{status:401,headers:{'content-type':'application/json'}});
-      try {
-        // No trusted server-side source verifier is wired to this endpoint yet.
-        // Never accept client-provided verification assertions for auto-publishing.
-        return new Response(JSON.stringify({status:'blocked',reason:'server_side_source_verification_not_integrated'}),{status:503,headers:{'content-type':'application/json'}});
-        const topic=await request.json();
-        const result=await prepareOriginalCandidate(env,topic);
-        return new Response(JSON.stringify(result),{headers:{'content-type':'application/json'}});
-      } catch(e) {
-        return new Response(JSON.stringify({error:String(e?.message||e)}),{status:400,headers:{'content-type':'application/json'}});
-      }
+      // Real server-side verification is not connected; never trust caller claims.
+      return new Response(JSON.stringify({status:'blocked',reason:'server_side_source_verification_not_integrated'}),{status:503,headers:{'content-type':'application/json'}});
     }
     if (url.pathname.startsWith('/api/factory/hq/')) return handleHqRequest(request, env);
     if (url.pathname === '/autopilot' && request.method === 'GET')
