@@ -15,7 +15,7 @@ export function assessOriginalContent(topic,draft,now=Date.now()){
  if(topic.verified!==true||topic.source_checked!==true)return {ok:false,reason:'source_not_verified'};
  if(topic.political||topic.high_risk||SENSITIVE.test(title+' '+summary+' '+copy))
   return {ok:false,reason:'manual_review_required'};
- if(draft.provider==='mock'||draft.mock===true)return {ok:false,reason:'mock_forbidden'};
+ if(draft.provider!=='openai'||draft.mock===true)return {ok:false,reason:'mock_forbidden'};
  if(copy.length<85||Array.from(copy).length>500||BANNED.test(copy))
   return {ok:false,reason:'low_quality_or_template'};
  if(!copy.includes(topic.source_url))return {ok:false,reason:'source_attribution_required'};
