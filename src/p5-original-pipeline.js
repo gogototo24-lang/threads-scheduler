@@ -17,6 +17,7 @@ export async function prepareOriginalCandidate(env,topic,now=Date.now()){
  const rank=scoreTopic(topic,now);
  if(!rank.eligible)return {status:'rejected',reason:rank.reason};
  if(!topic.source_url||!topic.verified_at)return {status:'rejected',reason:'source_verification_missing'};
+ if(!['official','independent'].includes(topic.verification_method)||!Array.isArray(topic.verification_urls)||!topic.verification_urls.length)return {status:'rejected',reason:'verification_evidence_missing'};
  if(providers(env).text!=='openai'||!env.OPENAI_API_KEY)
   return {status:'blocked',reason:'real_text_provider_not_configured'};
  const drafts=await generateDrafts(env,topic);
