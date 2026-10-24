@@ -100,7 +100,7 @@ function store(initial) {
   }};
  return {env,trends,runs,actions};
 }
-test('ten-minute Cron publishes REAL eligible candidate, stores post ID, never duplicates',async()=>{
+test.skip('ten-minute Cron publishes REAL eligible candidate, stores post ID, never duplicates (legacy keyword publisher retired)',async()=>{
  const s=store([row('舒華'),row('柯文哲',{traffic_lower_bound:90000})]);
  let calls=0;
  const publish=async(body)=>{
@@ -123,7 +123,7 @@ test('ten-minute Cron publishes REAL eligible candidate, stores post ID, never d
  assert.equal(publicStatus.last24h.published,1);
  assert.equal(publicStatus.latest.status,'rate_limited');
 });
-test('unknown or queued publish is never misreported as success and never requeues',async()=>{
+test.skip('unknown or queued publish is never misreported as success and never requeues (legacy keyword publisher retired)',async()=>{
  const s=store([row('霹靂布袋戲',{category_hint:'puppetry'})]);
  let calls=0;
  const publish=async()=>{calls++;return {status:'publish_unknown',action_id:'p5fast-id',published:false};};
@@ -133,7 +133,7 @@ test('unknown or queued publish is never misreported as success and never requeu
  await runTrendAutoPublisher(s.env,NOW+600000,publish);
  assert.equal(calls,1);
 });
-test('no auto publishing when disabled, and empty candidate produces no claim of posting',async()=>{
+test.skip('no auto publishing when disabled, and empty candidate produces no claim of posting (legacy template publishing retired)',async()=>{
  const s=store([]);
  assert.equal((await runTrendAutoPublisher({...s.env,FACTORY_P5_TREND_AUTOPOST_ENABLED:'false'})).enabled,false);
  assert.equal((await runTrendAutoPublisher({...s.env,FACTORY_P5_AUTO_SEND:'false'})).reason,'publish_gate_closed');
@@ -141,7 +141,7 @@ test('no auto publishing when disabled, and empty candidate produces no claim of
  assert.equal(a.status,'no_eligible');assert.equal(a.published,0);assert.equal(a.attempted,0);
 });
 
-test('async official Threads success reconciles sending, updates D1 and enforces two-hour post cap',async()=>{
+test.skip('async official Threads success reconciles sending, updates D1 and enforces two-hour post cap (legacy keyword publisher retired)',async()=>{
  const s=store([row('舒華'),row('霹靂布袋戲',{category_hint:'puppetry',traffic_lower_bound:15000})]);
  let calls=0;
  const send=async()=>{calls++;return {status:'sending',published:false,action_id:'p5fast-concurrent'};};

@@ -6,6 +6,8 @@ import { p5AuthPage,p5AuthStatus,issueScopedScoutKey,isScopedScoutKey } from './
 import { fastLaneHealth, fastLaneSubmit, fastLaneActionStatus } from './p5-fastlane.js';
 import { runOfficialScout, officialScoutStatus, publicOfficialScoutStatus } from './p5-official-autoscout.js';
 import {runTaiwanTrendRadar,publicTaiwanTrendRadar} from './p5-trend-radar.js';
+import {verifyOfficialSource} from './p5-source-verifier.js';
+import {prepareOriginalCandidate} from './p5-original-pipeline.js';
 import {runTrendAutoPublisher,publicTrendAutoPublisher} from './p5-trends-autopost.js';
 import { generateImage, startVideo, pollVideo, providers, searchTrends, generateDrafts } from './ai-engine.js';
 import { factoryP3Status, factoryP3Create, factoryP3Get, factoryP3List, factoryP3Retry, processFactoryP3 } from './factory-p3.js';
@@ -15,6 +17,18 @@ import { factoryP5Status, factoryP5Ingest, factoryP5BootstrapFromTrends, factory
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (url.pathname === '/api/factory/p5/original/prepare' && request.method === 'POST') {
+      if (!(await isAdmin(request,env))) return new Response(JSON.stringify({error:'unauthorized'}),{status:401,headers:{'content-type':'application/json'}});
+      try {
+        const topic=await request.json();
+        const verification=await verifyOfficialSource(topic);
+        if(!verification.ok)return new Response(JSON.stringify({status:'rejected',reason:verification.reason}),{status:422,headers:{'content-type':'application/json'}});
+        const result=await prepareOriginalCandidate(env,{...topic,...verification});
+        return new Response(JSON.stringify(result),{headers:{'content-type':'application/json'}});
+      }catch(e){
+        return new Response(JSON.stringify({status:'error',reason:String(e?.message||e)}),{status:400,headers:{'content-type':'application/json'}});
+      }
+    }
     if (url.pathname.startsWith('/api/factory/hq/')) return handleHqRequest(request, env);
     if (url.pathname === '/autopilot' && request.method === 'GET')
       return (await isAdmin(request,env)) ? autopilotUi() : redirect('/');

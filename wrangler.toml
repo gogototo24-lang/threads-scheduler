@@ -33,13 +33,13 @@ RUNNINGHUB_EST_NTD_PER_GPU_MIN = "0"
 # Public interaction mode: reply/quote/repost enabled with rate/risk gates; DMs permanently disabled.
 FACTORY_P5_ENABLED = "true"
 # P5 verified official-source autopost (Taiwan tourism + Taipei tourism official feeds; never Metricool)
-FACTORY_P5_OFFICIAL_SCOUT_ENABLED = "true"
+FACTORY_P5_OFFICIAL_SCOUT_ENABLED = "false"
 # Google Trends official Taiwan RSS is discovery-only; does not post unverified trends.
 # Cloudflare egress got HTTP 429; GitHub Actions now polls the official feed every 10 min and writes D1.
 FACTORY_P5_TREND_RADAR_ENABLED = "false"
 # REAL text auto-posts based on Google TW trend RSS data imported in D1.
 # Capped four per day and minimum two hours between posts.
-FACTORY_P5_TREND_AUTOPOST_ENABLED = "true"
+FACTORY_P5_TREND_AUTOPOST_ENABLED = "false"
 FACTORY_P5_AUTO_SEND = "true"
 FACTORY_P5_ALLOW_REPLY = "true"
 FACTORY_P5_ALLOW_QUOTE = "true"
