@@ -5,7 +5,7 @@ const title='台灣秋季文化藝術展覽活動正式登場';
 const topic={title,source_url:'https://www.taiwan.net.tw/example',published_at:new Date().toISOString()};
 const html=(body)=>new Response(body,{status:200,headers:{'content-type':'text/html'}});
 test('official page title corroboration passes',async()=>{
- const r=await verifyOfficialSource(topic,async()=>html('<html><body>'+title+'</body></html>'));
+ const r=await verifyOfficialSource(topic,async()=>html('<html><head><meta property="article:published_time" content="'+new Date().toISOString().slice(0,10)+'"></head><body>'+title+'</body></html>'));
  assert.equal(r.ok,true);assert.equal(r.verification_attested_by,'trusted_official_scout');
 });
 test('reject external URL before any fetch',async()=>{
