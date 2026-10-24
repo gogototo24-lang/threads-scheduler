@@ -119,7 +119,7 @@ async function safeFetch(fetcher,url,ms) {
  return {response,resolved};
 }
 export async function runOfficialScout(env,now=Date.now(),fetcher=fetch){
- if(String(env.FACTORY_P5_ORIGINAL_PIPELINE_READY||'')!=='true') return {enabled:true,publication_paused:true,reason:'original_content_pipeline_required',submitted:0,published:0};
+ return {enabled:true,publication_paused:true,reason:'original_content_pipeline_required',submitted:0,published:0};
  if(String(env.FACTORY_P5_OFFICIAL_SCOUT_ENABLED||'').toLowerCase()!=='true')return {enabled:false};
  if(String(env.FACTORY_P5_AUTO_SEND||'').toLowerCase()!=='true'||
     String(env.FACTORY_P5_ALLOW_EXTERNAL_PUBLISH||'').toLowerCase()!=='true')
