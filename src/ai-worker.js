@@ -19,6 +19,9 @@ export default {
     if (url.pathname === '/api/factory/p5/original/prepare' && request.method === 'POST') {
       if (!(await isAdmin(request,env))) return new Response(JSON.stringify({error:'unauthorized'}),{status:401,headers:{'content-type':'application/json'}});
       try {
+        // No trusted server-side source verifier is wired to this endpoint yet.
+        // Never accept client-provided verification assertions for auto-publishing.
+        return new Response(JSON.stringify({status:'blocked',reason:'server_side_source_verification_not_integrated'}),{status:503,headers:{'content-type':'application/json'}});
         const topic=await request.json();
         const result=await prepareOriginalCandidate(env,topic);
         return new Response(JSON.stringify(result),{headers:{'content-type':'application/json'}});
