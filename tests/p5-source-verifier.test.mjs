@@ -14,6 +14,6 @@ test('reject external URL before any fetch',async()=>{
  assert.equal(r.ok,false);assert.equal(called,false);
 });
 test('reject missing title evidence and redirects',async()=>{
- assert.equal((await verifyOfficialSource(topic,async()=>html('unrelated content'))).reason,'title_not_supported_by_source');
+ assert.equal((await verifyOfficialSource(topic,async()=>html('<meta property="article:published_time" content="'+new Date().toISOString().slice(0,10)+'"> unrelated content'))).reason,'title_not_supported_by_source');
  assert.equal((await verifyOfficialSource(topic,async()=>new Response('',{status:302,headers:{location:'https://evil.example'}}))).ok,false);
 });
