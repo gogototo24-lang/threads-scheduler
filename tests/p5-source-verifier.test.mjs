@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {verifyOfficialSource} from '../src/p5-source-verifier.js';
 const title='台灣秋季文化藝術展覽活動正式登場';
-const topic={title,source_url:'https://www.taiwan.net.tw/example'};
+const topic={title,source_url:'https://www.taiwan.net.tw/example',published_at:new Date().toISOString()};
 const html=(body)=>new Response(body,{status:200,headers:{'content-type':'text/html'}});
 test('official page title corroboration passes',async()=>{
  const r=await verifyOfficialSource(topic,async()=>html('<html><body>'+title+'</body></html>'));
