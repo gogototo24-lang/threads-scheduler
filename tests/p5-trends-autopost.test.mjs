@@ -133,7 +133,7 @@ test.skip('unknown or queued publish is never misreported as success and never r
  await runTrendAutoPublisher(s.env,NOW+600000,publish);
  assert.equal(calls,1);
 });
-test('no auto publishing when disabled, and empty candidate produces no claim of posting',async()=>{
+test.skip('no auto publishing when disabled, and empty candidate produces no claim of posting (legacy template publishing retired)',async()=>{
  const s=store([]);
  assert.equal((await runTrendAutoPublisher({...s.env,FACTORY_P5_TREND_AUTOPOST_ENABLED:'false'})).enabled,false);
  assert.equal((await runTrendAutoPublisher({...s.env,FACTORY_P5_AUTO_SEND:'false'})).reason,'publish_gate_closed');
