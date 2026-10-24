@@ -23,6 +23,7 @@ export async function prepareOriginalCandidate(env,topic,now=Date.now()){
  const draft=drafts.find(x=>x.universe===rank.universe);
  if(!draft)return {status:'blocked',reason:'universe_draft_missing'};
  const candidate={...draft,provider:'openai'};
+ if(!candidate.copy.includes(topic.source_url)) candidate.copy+='\n來源：'+topic.source_url;
  const verdict=assessOriginalContent(topic,candidate,now);
  if(!verdict.ok)return {status:'review_required',reason:verdict.reason,universe:rank.universe};
  return {status:'ready_for_publication_review',topic_score:rank.score,universe:rank.universe,
