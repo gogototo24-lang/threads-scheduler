@@ -100,6 +100,10 @@ export async function reconcileTrendPublishes(env,now=Date.now()){
  return {confirmed};
 }
 export async function runTrendAutoPublisher(env,now=Date.now(),publish=defaultPublish) {
+ // Fail closed: a search keyword is a discovery signal, not an original story.
+ // Keep ingest and public radar operational; do not enqueue template posts.
+ // Restore only after verified source + original copy + CANON/media QA is wired.
+ return {enabled:false,reason:'original_content_pipeline_required',published:0,attempted:0};
  if(String(env.FACTORY_P5_TREND_AUTOPOST_ENABLED||'').toLowerCase()!=='true')
   return {enabled:false};
  if(String(env.FACTORY_P5_AUTO_SEND||'').toLowerCase()!=='true'||
