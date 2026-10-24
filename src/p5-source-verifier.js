@@ -14,7 +14,17 @@ export async function verifyOfficialSource(topic,fetcher=fetch,now=Date.now()){
  if(!response.ok||response.status>=300)return {ok:false,reason:'source_unreachable'};
  const type=String(response.headers.get('content-type')||'').toLowerCase();
  if(!/(html|xml|rss)/.test(type))return {ok:false,reason:'invalid_source_type'};
- const body=(await response.text()).slice(0,250000);
+ const contentLength=Number(response.headers.get('content-length')||0);
+ if(contentLength>250000)return {ok:false,reason:'source_too_large'};
+ const reader=response.body?.getReader();
+ let body='';
+ if(reader){
+  const decoder=new TextDecoder();let bytes=0;
+  try {while(true){const {done,value}=await reader.read();if(done)break;bytes+=value.byteLength;
+    if(bytes>250000){await reader.cancel();return {ok:false,reason:'source_too_large'};}
+    body+=decoder.decode(value,{stream:true});}body+=decoder.decode();}
+  finally{reader.releaseLock();}
+ }else body=(await response.text()).slice(0,250000);
  const normalized=s=>String(s).replace(/<[^>]+>/g,' ').replace(/\s+/g,'').toLowerCase();
  const titleWords=normalized(title);
  if(titleWords.length<8||!normalized(body).includes(titleWords))
